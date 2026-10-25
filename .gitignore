@@ -1,0 +1,6 @@
+build*/
+installer/stage/
+installer/output/
+tools/sig_input.txt
+__pycache__/
+*.log

@@ -1,0 +1,58 @@
+name: Bug report
+description: Something in the mod doesn't work or looks wrong
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. The quickest way to get it fixed: in the headset overlay (hold Guide, press Menu), go to
+        **Support** and choose **Save a bug report folder**, then drag the files from that folder (it's in the game
+        folder, named `vrmod_report_...`) into the box at the bottom.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you saw instead. Screenshots or a short video help.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Mod version
+      description: Shown on the overlay's Status page, or in the installer's file name.
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: store
+    attributes:
+      label: Where your copy of the game is from
+      options: [Steam, Epic, GOG, Other]
+    validations:
+      required: true
+  - type: input
+    id: headset
+    attributes:
+      label: Headset and VR runtime
+      placeholder: "Pimax Dream Air, SteamVR / Quest 3, Virtual Desktop / ..."
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: Graphics card
+      placeholder: "RTX 4080"
+    validations:
+      required: true
+  - type: dropdown
+    id: foveation
+    attributes:
+      label: Foveated rendering (Rendering page in the overlay)
+      options: [Not installed, "Off", Fixed, Eye tracked]
+  - type: textarea
+    id: logs
+    attributes:
+      label: Bug report folder / logs
+      description: The files from the bug report folder, or at least `vrmod.log` from the game folder.
+    validations:
+      required: true

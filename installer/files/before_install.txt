@@ -1,0 +1,13 @@
+Before you install
+------------------
+
+- Close Shadow of the Tomb Raider (and any mod tools running with it).
+- The mod is installed into the game's folder: Setup finds it in your Steam, Epic or GOG library. Nothing in the
+  game's own files is changed; uninstall removes the mod again.
+- If another mod uses dxgi.dll in the game folder (ReShade, OptiScaler, Special K), Setup moves it aside and puts it
+  back when you uninstall. The two can't run together yet.
+- Optional: foveated rendering (CheekyFoveatedDLSS), fixed or eye tracked, and with eye tracking DLSS 5 neural
+  rendering. The next pages explain each.
+
+This mod is free and open source (GPL-3.0). It is not affiliated with or endorsed by Square Enix, Eidos-Montreal,
+Crystal Dynamics or NVIDIA.

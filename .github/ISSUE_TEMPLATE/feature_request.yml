@@ -1,0 +1,15 @@
+name: Idea or request
+description: Something you'd like the mod to do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you'd like
+      description: What it would do, and when you'd use it in the game.
+    validations:
+      required: true
+  - type: input
+    id: headset
+    attributes:
+      label: Headset and graphics card (if it matters for the idea)
