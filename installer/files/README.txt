@@ -17,8 +17,7 @@ First start
 1. Start your headset's VR software (e.g. SteamVR) first, then the game from Steam as normal.
 2. The first start writes vrmod_settings.ini next to the game and works out the best resolution for your headset.
    The headset shows the settings it chose, and once a level has loaded it asks to restart the game once: press A (or
-   Enter), confirm the game's quit message, and the game starts again by itself (give it about a minute to come back
-   to the headset).
+   Enter), confirm the game's quit message, then start the game again.
 3. In the game's display settings: keep DirectX 12 and DLSS on. The mod switches the game's own Stereoscopic 3D off
    for you.
 4. SteamVR's own render resolution setting doesn't change this game (Auto or manual, global or per game): the mod

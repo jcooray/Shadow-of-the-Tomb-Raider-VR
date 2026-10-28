@@ -223,9 +223,9 @@ license you like.
 
 ## ClarkCheekyKent/CheekyFoveatedDLSS (optional, installed separately by the installer)
 
-The installer's optional foveated rendering component is CheekyFoveatedDLSS (`version.dll` and the
-`CheekyFoveatedDLSS` folder), licensed GPL-3.0 and installed as separate files beside the game; it is not linked into
-this mod. Built from https://github.com/jcooray/CheekyFoveatedDLSS/tree/sottr-vr-1.0.0 (upstream v0.6.0 plus
+The installer's optional foveated rendering component is CheekyFoveatedDLSS (the `CheekyFoveatedDLSS` folder), licensed
+GPL-3.0 and installed as separate files beside the game. It is not linked into this mod: the mod loads it at run time
+(`src/cheeky_loader.cpp`, in place of Cheeky's own `version.dll` loader, which isn't installed). Built from https://github.com/jcooray/CheekyFoveatedDLSS/tree/sottr-vr-1.0.0 (upstream v0.6.0 plus
 ClarkCheekyKent/CheekyFoveatedDLSS pull requests #64-#66, and a Logging setting). The installer places its licence in
 `SOTTR-VR\CHEEKY_LICENSE.txt` in the game folder. `src/cheeky_host.cpp` implements its documented gaze provider interface
 without including any of its source.

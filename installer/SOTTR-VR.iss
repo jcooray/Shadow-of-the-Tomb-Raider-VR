@@ -1,8 +1,9 @@
 ; Shadow of the Tomb Raider VR -- installer (Inno Setup 7). Build with tools/make_installer.py, which stages the files
 ; into installer\stage and runs ISCC. The installer:
 ;   - finds the game (Steam libraries, Epic and GOG install records; otherwise Browse) and checks SOTTR.exe is there;
-;   - moves a dxgi.dll / version.dll from another mod aside (restored on uninstall);
-;   - installs the mod (dxgi.dll) and, if chosen, CheekyFoveatedDLSS foveated rendering (version.dll loader + its folder),
+;   - moves a dxgi.dll from another mod aside (restored on uninstall);
+;   - installs the mod (dxgi.dll) and, if chosen, CheekyFoveatedDLSS foveated rendering (its folder; the mod loads it --
+;     Cheeky's own version.dll loader isn't installed, and an earlier install's is removed),
 ;     fixed or eye tracked -- vrmod_settings.ini [foveation] mode, and the sharp region's size in Cheeky's ini -- and with
 ;     eye tracking optionally DLSS 5: NVIDIA's nvngx_dlssnr.dll is never shipped; Setup copies one the PC already has
 ;     (from another game) into the game folder, and removes only that copy again;
@@ -55,10 +56,8 @@ VersionInfoDescription={#AppName} installer
 [Files]
 Source: "stage\dxgi.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "stage\README.txt"; DestDir: "{app}\SOTTR-VR"; Flags: ignoreversion isreadme
-Source: "stage\SOTTR-VR-restart.exe"; DestDir: "{app}\SOTTR-VR"; Flags: ignoreversion
 Source: "stage\LICENSE.txt"; DestDir: "{app}\SOTTR-VR"; Flags: ignoreversion
 Source: "stage\THIRD_PARTY_NOTICES.md"; DestDir: "{app}\SOTTR-VR"; Flags: ignoreversion
-Source: "stage\cheeky\version.dll"; DestDir: "{app}"; Check: FoveationOn; Flags: ignoreversion
 Source: "stage\cheeky\CheekyFoveatedDLSSHost.dll"; DestDir: "{app}\CheekyFoveatedDLSS"; Check: FoveationOn; Flags: ignoreversion
 Source: "stage\cheeky\CheekyFoveatedDLSSRuntime.dll"; DestDir: "{app}\CheekyFoveatedDLSS"; Check: FoveationOn; Flags: ignoreversion
 Source: "stage\cheeky\CheekyFoveatedDLSS.ini"; DestDir: "{app}\CheekyFoveatedDLSS"; Check: FoveationOn; Flags: onlyifdoesntexist uninsneveruninstall
@@ -88,7 +87,7 @@ Type: dirifempty; Name: "{app}\SOTTR-VR"
 
 [Messages]
 SelectDirLabel3=Setup found Shadow of the Tomb Raider in the folder below. If that's not where you play it from, click Browse and choose the folder that contains SOTTR.exe.
-FinishedLabel=Shadow of the Tomb Raider VR is installed.%n%nStart your headset's VR software (e.g. SteamVR), then the game as usual. The first start works out the right resolution for your headset and graphics card, then asks once a level has loaded to restart the game to apply it (press A, then confirm the game's quit message).%n%nIn the headset, hold Guide (the Xbox button) and press Menu for the mod's settings.
+FinishedLabel=Shadow of the Tomb Raider VR is installed.%n%nStart your headset's VR software (e.g. SteamVR), then the game as usual. The first start works out the right resolution for your headset and graphics card, then asks once a level has loaded to restart the game to apply it (press A, confirm the game's quit message, then start the game again).%n%nIn the headset, hold Guide (the Xbox button) and press Menu for the mod's settings.
 
 [Code]
 const
@@ -536,7 +535,7 @@ begin
   end;
 end;
 
-{ A dxgi.dll / version.dll that isn't ours (another mod: ReShade, OptiScaler, Special K, ...) is moved aside, and put back
+{ A dxgi.dll that isn't ours (another mod: ReShade, OptiScaler, Special K, ...) is moved aside, and put back
   when the mod is uninstalled. }
 { Ours: the file contains a name only our builds have -- the mod's settings file name vrmod_settings.ini (in every build; its
   Cheeky gaze export names are shared with other mods), or
@@ -569,21 +568,28 @@ begin
   if FileExists(Path + BackupSuffix) and not FileExists(Path) then RenameFile(Path + BackupSuffix, Path);
 end;
 
+{ The mod loads CheekyFoveatedDLSS itself (1.0.0 and later); an earlier install's Cheeky loader (version.dll) is removed,
+  and a version.dll that Setup had moved aside for it put back. }
+procedure RemoveCheekyLoader;
+var
+  Dir: String;
+begin
+  Dir := ExpandConstant('{app}\');
+  if FileExists(Dir + 'version.dll') and IsOurs(Dir + 'version.dll', 'CheekyBootstrap_Status') then
+    if DeleteFile(Dir + 'version.dll') then Log('Removed an earlier install''s Cheeky loader (version.dll): the mod loads it now');
+  RestoreAside('version.dll');
+end;
+
 { Reinstalling over an earlier install upgrades it in place (same AppId). Foveated rendering left out this time: remove
-  the earlier install's Cheeky files, which would otherwise keep loading, and put back a version.dll that Setup moved
-  aside for it. Its settings (the two ini files) stay for a later reinstall. }
+  the earlier install's Cheeky files. Its settings (the two ini files) stay for a later reinstall. }
 procedure RemoveFoveation;
 var
   Dir: String;
 begin
   Dir := ExpandConstant('{app}\');
-  if FileExists(Dir + 'version.dll') and IsOurs(Dir + 'version.dll', 'CheekyBootstrap_Status') then begin
-    if DeleteFile(Dir + 'version.dll') then Log('Foveated rendering not selected: removed version.dll (CheekyFoveatedDLSS)');
-    DeleteFile(Dir + 'CheekyFoveatedDLSS\CheekyFoveatedDLSSHost.dll');
-    DeleteFile(Dir + 'CheekyFoveatedDLSS\CheekyFoveatedDLSSRuntime.dll');
-    DeleteFile(Dir + 'SOTTR-VR\CHEEKY_LICENSE.txt');
-  end;
-  RestoreAside('version.dll');
+  DeleteFile(Dir + 'CheekyFoveatedDLSS\CheekyFoveatedDLSSHost.dll');
+  DeleteFile(Dir + 'CheekyFoveatedDLSS\CheekyFoveatedDLSSRuntime.dll');
+  DeleteFile(Dir + 'SOTTR-VR\CHEEKY_LICENSE.txt');
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
@@ -595,9 +601,6 @@ begin
   InitFoveationChoice;   { a silent install never shows the page }
   if FileExists(ExpandConstant('{app}\dxgi.dll')) and not IsOurs(ExpandConstant('{app}\dxgi.dll'), 'vrmod_settings.ini') then
     Other := 'dxgi.dll';
-  if FoveationOn and FileExists(ExpandConstant('{app}\version.dll')) and
-     not IsOurs(ExpandConstant('{app}\version.dll'), 'CheekyBootstrap_Status') then
-    if Other = '' then Other := 'version.dll' else Other := Other + ' and version.dll';
   if Other <> '' then
     if SuppressibleMsgBox('The game folder already has a ' + Other + ' from something else (another mod such as ReShade, OptiScaler ' +
               'or Special K, or an earlier manual install of this mod).' + #13#10#13#10 +
@@ -608,7 +611,8 @@ begin
       Exit;
     end;
   MoveAside('dxgi.dll', 'vrmod_settings.ini');
-  if FoveationOn then MoveAside('version.dll', 'CheekyBootstrap_Status') else RemoveFoveation;
+  RemoveCheekyLoader;
+  if not FoveationOn then RemoveFoveation;
 end;
 
 { ---- Uninstall ---- }

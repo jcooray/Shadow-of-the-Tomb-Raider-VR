@@ -1204,39 +1204,12 @@ void DismissNotice(bool ok) {
     g_lastSig.clear();
 }
 
-// Restarts the game: SOTTR-VR\SOTTR-VR-restart.exe (from Setup) waits for it to close and starts it again -- through Steam
-// when Steam started it (SteamAppId set), else the same exe with the same command line (Epic, GOG) -- then the game is
-// closed. Without the helper it is only closed.
-void RestartGame() {
-    wchar_t exe[MAX_PATH] = {};
-    GetModuleFileNameW(nullptr, exe, MAX_PATH);
-    std::wstring dir = exe;
-    dir = dir.substr(0, dir.find_last_of(L'\\'));
-    const std::wstring helper = dir + L"\\SOTTR-VR\\SOTTR-VR-restart.exe";
-    wchar_t appId[32] = {};
-    std::wstring target, args;
-    if (GetEnvironmentVariableW(L"SteamAppId", appId, 32) && appId[0]) {
-        target = std::wstring(L"steam://rungameid/") + appId;
-    } else {
-        target = exe;
-        const wchar_t* c = GetCommandLineW();   // its arguments: after the (possibly quoted) program name
-        if (*c == L'"') { ++c; while (*c && *c != L'"') ++c; if (*c) ++c; }
-        else while (*c && *c != L' ' && *c != L'\t') ++c;
-        while (*c == L' ' || *c == L'\t') ++c;
-        args = c;
-    }
-    std::wstring cmd = L"\"" + helper + L"\" " + std::to_wstring(GetCurrentProcessId()) + L" \"" + target + L"\"";
-    if (!args.empty()) cmd += L" " + args;
-    STARTUPINFOW si{ sizeof(si) };
-    PROCESS_INFORMATION pi{};
-    if (GetFileAttributesW(helper.c_str()) != INVALID_FILE_ATTRIBUTES
-        && CreateProcessW(helper.c_str(), cmd.data(), nullptr, nullptr, FALSE, DETACHED_PROCESS, nullptr, dir.c_str(), &si, &pi)) {
-        CloseHandle(pi.hThread);
-        CloseHandle(pi.hProcess);
-        modlog::Line("OVERLAY: restarting the game (SOTTR-VR-restart.exe starts it again once it has closed)");
-    } else {
-        modlog::Line("OVERLAY: SOTTR-VR-restart.exe not found or not started -- the game closes; start it again yourself");
-    }
+// Closes the game for the restart that applies the render resolution: the game asks to confirm its quit message (in a
+// level), and the player starts it again. (A helper that started it again by itself was dropped, 2026-10-28: a small
+// program waiting for one process to end and then starting another drew 6/71 virus-scanner detections, Microsoft's
+// among them.)
+void QuitForRestart() {
+    modlog::Line("OVERLAY: closing the game for the restart that applies the render resolution");
     ExitGameToWindows(false);
 }
 
@@ -1273,7 +1246,7 @@ void ShowAutoSettingsNotice(bool restartLater, float pct) {
 }
 
 // First run, once a level has loaded and play has gone on for 3 s: restart, to apply the render resolution. The game asks
-// to confirm its quit message (only in a level); then the helper starts it again.
+// to confirm its quit message (only in a level); then the player starts it again.
 void FirstRestartPrompt(ULONGLONG now) {
     static ULONGLONG playSince = 0;
     if (!g_restartPrompt) return;
@@ -1285,10 +1258,10 @@ void FirstRestartPrompt(ULONGLONG now) {
     if (now - playSince < 3000) return;
     g_restartPrompt = false;
     ShowFirstRunNotice("Restart the game",
-                       "The render resolution chosen for your PC applies after a restart. Press A, then confirm the game's quit message: "
-                       "the game closes and starts again by itself. Give it about a minute to reappear in the headset.",
-                       "A / Enter: restart the game", [] { RestartGame(); });
-    modlog::Line("OVERLAY: restart notice (A / Enter, then the game's quit message; the helper starts it again)");
+                       "The render resolution chosen for your PC applies after a restart. Press A, confirm the game's quit message, "
+                       "then start the game again.",
+                       "A / Enter: quit the game", [] { QuitForRestart(); });
+    modlog::Line("OVERLAY: restart notice (A / Enter, then the game's quit message; the player starts it again)");
 }
 
 void HandleInput(const PadState& pad, ULONGLONG now) {

@@ -102,6 +102,7 @@ add_library(vrmod_dxgi_proxy SHARED
     src/game_addresses.cpp
     src/gpu_tier.cpp
     src/steamvr_settings.cpp
+    src/cheeky_loader.cpp
     src/hud_layer.cpp
     src/aim_finder.cpp
     src/aim_watch.cpp
@@ -160,12 +161,6 @@ endif()
 
 # Offline check of the release address patterns against the installed SOTTR.exe (tools/gameaddr_test.cpp).
 # Offline preview of the in-headset overlay's pages (tools/overlay_preview.cpp): the overlay with stand-ins for the game.
-# Restarts the game once it has closed (the first start's "Auto settings detected" notice); shipped in SOTTR-VR\.
-add_executable(sottrvr_restart WIN32 src/restart_helper.cpp)
-set_target_properties(sottrvr_restart PROPERTIES OUTPUT_NAME "SOTTR-VR-restart")
-target_compile_definitions(sottrvr_restart PRIVATE UNICODE _UNICODE)
-target_link_libraries(sottrvr_restart PRIVATE shell32)
-
 add_executable(vrmod_overlay_preview tools/overlay_preview.cpp src/vr_overlay.cpp src/settings.cpp src/gpu_tier.cpp src/steamvr_settings.cpp)
 target_compile_definitions(vrmod_overlay_preview PRIVATE UNICODE _UNICODE VRMOD_DIAG=0)
 target_include_directories(vrmod_overlay_preview PRIVATE ${CMAKE_BINARY_DIR}/_deps/openxr_sdk-src/include)

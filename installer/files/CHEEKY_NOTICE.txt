@@ -1,7 +1,8 @@
 CheekyFoveatedDLSS (optional part of Shadow of the Tomb Raider VR)
 ==================================================================
 
-The files in the CheekyFoveatedDLSS folder and version.dll are CheekyFoveatedDLSS by ClarkCheekyKent and contributors,
+The files in the CheekyFoveatedDLSS folder are CheekyFoveatedDLSS by ClarkCheekyKent and contributors (the VR mod loads
+them; Cheeky's own version.dll loader isn't installed),
 built from upstream v0.6.0 with three changes offered upstream (ClarkCheekyKent/CheekyFoveatedDLSS pull requests
 #64-#66), including the interface that lets the VR mod supply the gaze and each eye's view, and a Logging setting
 (installed off; the VR mod's overlay turns it on for bug reports).

@@ -62,11 +62,11 @@ than *Ultra* or *High*; on mid-range cards use *High* or *Ultra*.
      another game on your PC (e.g. Crimson Desert, No Man's Sky) and copies it into the game folder. It has to suit your
      graphics card (NVIDIA's current build is for the RTX 50 series).
 
-Setup copies `dxgi.dll` (the mod) and, if chosen, `version.dll`, a `CheekyFoveatedDLSS` folder and
+Setup copies `dxgi.dll` (the mod) and, if chosen, a `CheekyFoveatedDLSS` folder (the mod loads it) and
 `nvngx_dlssnr.dll` into the game folder, plus a `SOTTR-VR` folder with the readme and licences. Nothing in the game's own files is changed.
 
-If another mod already uses `dxgi.dll` or `version.dll` there (ReShade, OptiScaler, Special K), Setup renames it and
-puts it back when you uninstall. The two can't run together yet.
+If another mod already uses `dxgi.dll` there (ReShade, OptiScaler, Special K), Setup renames it and puts it back when
+you uninstall. The two can't run together yet.
 
 **Updating or uninstalling:** run Setup again. It sees the mod is installed and asks whether to update / change it or
 uninstall it. Or uninstall from Windows' Installed apps. You can keep your settings for next time, and uninstalling
@@ -77,8 +77,8 @@ also sets the game's fullscreen resolution back to your desktop's.
 1. Start your VR runtime first (e.g. SteamVR), then the game as normal.
 2. The first start writes `vrmod_settings.ini` next to the game and works out a render resolution for your headset and
    graphics card. The headset shows the settings it chose, and once a level has loaded it asks to **restart the game
-   once**: press **A** (or Enter), confirm the game's quit message, and the game starts again by itself. Give it about
-   a minute to come back to the headset. From then on it renders at that resolution.
+   once**: press **A** (or Enter), confirm the game's quit message, then start the game again. From then on it renders
+   at that resolution.
 3. In the game's display settings, keep DirectX 12 and DLSS on. The mod turns off the game's own Stereoscopic 3D for
    you.
 4. **SteamVR's own render resolution setting doesn't change this game,** whether it's on Auto or set by hand, globally or
