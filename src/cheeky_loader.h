@@ -9,8 +9,4 @@ namespace vrmod {
 // (standalone host) -- off the loader lock, as Cheeky's loader does.
 void CheekyLoaderStart();
 
-// After a successful real CreateDXGIFactory*: waits (once, up to 10 s) for the worker, so Cheeky's hooks are in before
-// the game creates its first swap chain. Not on the worker's own thread (Cheeky creates factories while starting).
-void CheekyLoaderAfterFactory();
-
 }

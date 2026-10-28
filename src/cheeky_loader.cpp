@@ -14,10 +14,7 @@ namespace vrmod {
 
 namespace {
 
-std::atomic<HANDLE> g_worker{ nullptr };
 std::atomic<int> g_state{ 0 };   // 0 not started, 1 starting, 2 started, 3 not loaded / failed
-std::atomic<bool> g_waitTimedOut{ false };
-thread_local bool t_inWorker = false;
 
 std::wstring GameDir() {
     wchar_t exe[MAX_PATH] = {};
@@ -36,7 +33,6 @@ bool OldLoaderPresent(const std::wstring& dir) {
 }
 
 DWORD WINAPI Worker(void*) {
-    t_inWorker = true;
     const std::wstring dir = GameDir();
     const std::wstring host = dir + L"CheekyFoveatedDLSS\\CheekyFoveatedDLSSHost.dll";
     if (GetFileAttributesW(host.c_str()) == INVALID_FILE_ATTRIBUTES) {   // foveated rendering not installed
@@ -74,21 +70,14 @@ DWORD WINAPI Worker(void*) {
 void CheekyLoaderStart() {
     int expected = 0;
     if (!g_state.compare_exchange_strong(expected, 1)) return;
+    // No wait for it anywhere, as with Cheeky's own version.dll loader: an earlier wait after each CreateDXGIFactory*
+    // deadlocked with the host's own device creation and held the game's start up for 10 s.
     const HANDLE h = CreateThread(nullptr, 0, Worker, nullptr, 0, nullptr);
     if (!h) {
         g_state.store(3);
         return;
     }
-    g_worker.store(h);
-}
-
-void CheekyLoaderAfterFactory() {
-    if (t_inWorker || g_state.load() != 1 || g_waitTimedOut.load()) return;
-    const HANDLE h = g_worker.load();
-    if (h && WaitForSingleObject(h, 10000) == WAIT_TIMEOUT) {
-        g_waitTimedOut.store(true);
-        modlog::Line("CHEEKY: CheekyFoveatedDLSS still starting after 10 s -- the game goes on without waiting");
-    }
+    CloseHandle(h);
 }
 
 }  // namespace vrmod

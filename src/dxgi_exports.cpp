@@ -12,7 +12,6 @@
 #include <unknwn.h>  // REFIID, without dxgi.h's conflicting dllimport declarations
 #include <string>
 
-#include "cheeky_loader.h"
 #include "logger.h"
 #include "resolution_unlock.h"
 
@@ -79,25 +78,19 @@ extern "C" {
 __declspec(dllexport) HRESULT WINAPI CreateDXGIFactory(REFIID riid, void** ppFactory) {
     EnsureRealDxgiLoaded();
     vrmod::InstallResolutionUnlock(false);
-    const HRESULT hr = g_pCreateDXGIFactory ? g_pCreateDXGIFactory(riid, ppFactory) : E_FAIL;
-    if (SUCCEEDED(hr)) vrmod::CheekyLoaderAfterFactory();   // Cheeky's hooks in before the first swap chain
-    return hr;
+    return g_pCreateDXGIFactory ? g_pCreateDXGIFactory(riid, ppFactory) : E_FAIL;
 }
 
 __declspec(dllexport) HRESULT WINAPI CreateDXGIFactory1(REFIID riid, void** ppFactory) {
     EnsureRealDxgiLoaded();
     vrmod::InstallResolutionUnlock(false);
-    const HRESULT hr = g_pCreateDXGIFactory1 ? g_pCreateDXGIFactory1(riid, ppFactory) : E_FAIL;
-    if (SUCCEEDED(hr)) vrmod::CheekyLoaderAfterFactory();   // Cheeky's hooks in before the first swap chain
-    return hr;
+    return g_pCreateDXGIFactory1 ? g_pCreateDXGIFactory1(riid, ppFactory) : E_FAIL;
 }
 
 __declspec(dllexport) HRESULT WINAPI CreateDXGIFactory2(UINT Flags, REFIID riid, void** ppFactory) {
     EnsureRealDxgiLoaded();
     vrmod::InstallResolutionUnlock(false);
-    const HRESULT hr = g_pCreateDXGIFactory2 ? g_pCreateDXGIFactory2(Flags, riid, ppFactory) : E_FAIL;
-    if (SUCCEEDED(hr)) vrmod::CheekyLoaderAfterFactory();   // Cheeky's hooks in before the first swap chain
-    return hr;
+    return g_pCreateDXGIFactory2 ? g_pCreateDXGIFactory2(Flags, riid, ppFactory) : E_FAIL;
 }
 
 __declspec(dllexport) HRESULT WINAPI DXGIGetDebugInterface1(UINT Flags, REFIID riid, void** pDebug) {
