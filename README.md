@@ -5,7 +5,7 @@ tracked: in first person from Lara's eyes, or with the game's own third-person c
 
 It's free and open source. If you enjoy it, you can [support its development](#support-development).
 
-<!-- VIDEO: link to the gameplay video goes here -->
+[![Watch the video: I Rebuilt Shadow of the Tomb Raider for VR](docs/video_thumbnail.jpg)](https://youtu.be/Hxtumxwy6vA)
 
 ## What it does
 
