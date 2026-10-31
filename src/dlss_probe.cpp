@@ -11,6 +11,7 @@
 
 #include "aer.h"
 #include "camera_interceptor.h"
+#include "desktop_spoof.h"
 #include "game_addresses.h"
 #include "logger.h"
 #include "perf_stats.h"
@@ -173,6 +174,7 @@ uint64_t __fastcall HkCreate(void* self, void* cl, uint32_t rw, uint32_t rh, uin
              self, node, rw, rh, ow, oh, flag, (r & 0xFF) ? "ok" : "FAILED", *reinterpret_cast<int*>(reinterpret_cast<char*>(self) + 0x1C),
              *reinterpret_cast<void**>(reinterpret_cast<char*>(self) + 0x28 + static_cast<size_t>(node) * 0x10));
     modlog::Line(b);
+    DesktopSpoofDlssCreated((r & 0xFF) != 0, ow, oh);
     return r;
 }
 

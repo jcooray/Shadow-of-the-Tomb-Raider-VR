@@ -28,9 +28,16 @@ bool DesktopSpoofAspectOverridden();
 // The fake desktop's size (the swapchain the game is asked for); false when the spoof isn't active.
 bool DesktopSpoofSize(unsigned* w, unsigned* h);
 
-// The game created its window swap chain (any size, called from SOTTR.exe): this start's render resolution works, so the
-// next start keeps it. Without this, the next start steps the render resolution down (desktop_spoof.cpp, self-healing).
+// The render size for a percentage of the headset's target (pixels, like SteamVR's), in multiples of 8 and at most
+// 8192 on either side (DLSS's limit). True when it had to be scaled down to fit.
+bool RenderSizeForPct(float pct, float targetW, float targetH, unsigned* w, unsigned* h);
+
+// The game created its window swap chain (any size, called from SOTTR.exe). This start's render resolution is kept once
+// the game's DLSS is created (DesktopSpoofDlssCreated) or 20 s later; a start that closes before then makes the next
+// start step the render resolution down (desktop_spoof.cpp, self-healing).
 void DesktopSpoofGameWindowCreated(unsigned w, unsigned h);
+// The game's DLSS create returned (its output size).
+void DesktopSpoofDlssCreated(bool ok, unsigned outW, unsigned outH);
 // This start stepped the render resolution down because the last one never reached the game's window: from that
 // percentage to 100 %, or to 0 = the game's own resolution. False when it didn't.
 bool DesktopSpoofFallback(int* fromPct, int* toPct);

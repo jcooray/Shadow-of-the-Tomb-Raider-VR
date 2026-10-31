@@ -4,6 +4,8 @@
 #include <windows.h>
 #include <xinput.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <string>
 
@@ -76,6 +78,12 @@ bool HudLayerEnabled() { return g_hudLayer; }
 void HudLayerSetEnabled(bool on) { g_hudLayer = on; }
 void EventMarkNow(const char*) {}
 bool DesktopSpoofFallback(int* fromPct, int* toPct) { *fromPct = *toPct = 0; return false; }
+bool RenderSizeForPct(float pct, float tw, float th, unsigned* w, unsigned* h) {
+    const float k = std::sqrt(pct / 100.0f), s = (std::min)({ 1.0f, 8192.0f / (tw * k), 8192.0f / (th * k) });
+    *w = static_cast<unsigned>(tw * k * s / 8.0f + 0.5f) * 8;
+    *h = static_cast<unsigned>(th * k * s / 8.0f + 0.5f) * 8;
+    return s < 1.0f;
+}
 int64_t DlssEvaluateCount() { return 100; }
 bool GameSwapChainHdr() { return false; }
 }  // namespace vrmod

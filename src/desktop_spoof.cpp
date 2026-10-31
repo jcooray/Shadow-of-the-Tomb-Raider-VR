@@ -2,10 +2,12 @@
 
 #include <dxgi.h>
 #include <MinHook.h>
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <thread>
 #include <tuple>
 
 #include "logger.h"
@@ -24,11 +26,20 @@ UINT g_fakeH = 4320;
 
 // Self-healing render resolution (1.0.1, 2026-10-31). 1.0.0 players whose game closed itself at start-up at the render
 // resolution the mod chose (before creating its window: alvaro, 5048x5240 on a 3840x2160 monitor) were stuck until they
-// deleted vrmod_settings.ini. Every start that applies a render resolution leaves this file until the game's window swap
-// chain exists; finding it at the next start means that start never got there, so this one steps down -- to 100 %, then
-// to the game's own resolution -- and the overlay says so.
+// deleted vrmod_settings.ini. Every start that applies a render resolution leaves this file until the game is running at
+// it; finding it at the next start means that start never got there, so this one steps down -- to 100 %, then to the
+// game's own resolution -- and the overlay says so. "Running" (1.0.7) is the game's DLSS created, or 20 s after its window
+// swap chain: Genf's game crashed 2 s after its window, when DLSS refused the size, and the file was already gone.
 constexpr const char* kPendingFile = "vrmod_resolution_pending.txt";
+constexpr DWORD kPendingGraceMs = 20000;
 std::atomic<bool> g_pending{false};
+std::atomic<bool> g_windowSeen{false};
+
+void ClearPending(const std::string& why) {
+    if (!g_pending.exchange(false)) return;
+    remove(kPendingFile);
+    modlog::Line("DesktopSpoof: " + why + " -- it starts fine at this render resolution.");
+}
 int g_fallbackFrom = 0;
 int g_fallbackTo = -1;   // -1: no fallback this start; 0: the game's own resolution
 
@@ -194,6 +205,20 @@ void RealDesktopMode(UINT* w, UINT* h) {
     }
 }
 
+// DLSS's widest and tallest output is 8192 pixels (tested 2026-10-31: 8192x5936 created and ran; at 8200x2400 the game's
+// DLSS create FAILED with a 0x0 render size and the game crashed reading it -- as Genf's Pimax 8KX on its wide FOV did,
+// target 11608x3200 at 70 % = 9712x2680). A larger size is scaled down to fit, keeping its shape.
+constexpr float kMaxRenderSide = 8192.0f;
+
+bool RenderSizeForPct(float pct, float targetW, float targetH, unsigned* w, unsigned* h) {
+    const float k = std::sqrt(pct / 100.0f);
+    const float fw = targetW * k, fh = targetH * k;
+    const float s = (std::min)({ 1.0f, kMaxRenderSide / fw, kMaxRenderSide / fh });
+    *w = (std::min)(static_cast<unsigned>(fw * s / 8.0f + 0.5f) * 8, static_cast<unsigned>(kMaxRenderSide));
+    *h = (std::min)(static_cast<unsigned>(fh * s / 8.0f + 0.5f) * 8, static_cast<unsigned>(kMaxRenderSide));
+    return s < 1.0f;
+}
+
 // [render] resolution_pct (in-headset overlay, "Render resolution"): a percentage of the PIXELS of the headset's target
 // render size (render.target_w / target_h, recorded by the OpenXR side) -- SteamVR's convention: 150 % = 1.22 x each side. Applied here, before the game reads its settings: the fake
 // desktop gets that size, and the game's saved fullscreen resolution is set to it (so the game starts at it).
@@ -213,8 +238,8 @@ bool ResolutionFromSettings(unsigned* w, unsigned* h) {
         SettingSet("render.resolution_pct", static_cast<float>(g_fallbackTo));
         SettingSet("render.resolution_auto", 0.0f);   // not chosen again for the graphics card
         SettingsWriteKeys({ { "render.resolution_pct", std::to_string(g_fallbackTo) }, { "render.resolution_auto", "0" } });
-        modlog::Line("DesktopSpoof: the last start at render resolution " + std::to_string(last) + " % never reached the game's window "
-            "(the game closed itself?) -- " + (g_fallbackTo ? std::string("100 % this time") : std::string("the game's own resolution this time")));
+        modlog::Line("DesktopSpoof: the last start at render resolution " + std::to_string(last) + " % never got going "
+            "(the game closed itself or crashed at start) -- " + (g_fallbackTo ? std::string("100 % this time") : std::string("the game's own resolution this time")));
         if (!g_fallbackTo) {   // the game's fullscreen resolution back to the monitor's, which it starts at by itself
             UINT rw = 0, rh = 0;
             RealDesktopMode(&rw, &rh);
@@ -225,11 +250,13 @@ bool ResolutionFromSettings(unsigned* w, unsigned* h) {
         }
         pct = static_cast<float>(g_fallbackTo);
     }
-    const float k = std::sqrt(pct / 100.0f);
-    *w = static_cast<unsigned>(tw * k / 8.0f + 0.5f) * 8;
-    *h = static_cast<unsigned>(th * k / 8.0f + 0.5f) * 8;
-    if (*w < 640 || *h < 480 || *w > 16384 || *h > 16384) return false;
-    if (fopen_s(&f, kPendingFile, "w") == 0 && f) {   // removed once the game's window swap chain exists
+    const bool capped = RenderSizeForPct(pct, tw, th, w, h);
+    if (*w < 640 || *h < 480) return false;
+    if (capped) {
+        modlog::Line("DesktopSpoof: " + std::to_string(static_cast<int>(pct)) + " % of the headset's target would be wider or taller than "
+            "DLSS can make (8192 pixels) -- scaled down to " + std::to_string(*w) + "x" + std::to_string(*h) + ".");
+    }
+    if (fopen_s(&f, kPendingFile, "w") == 0 && f) {   // removed once the game runs at it (ClearPending)
         fprintf(f, "%d %ux%u\n", static_cast<int>(pct), *w, *h);
         fclose(f);
         g_pending.store(true);
@@ -408,10 +435,22 @@ bool DesktopSpoofSize(unsigned* w, unsigned* h) {
 }
 
 void DesktopSpoofGameWindowCreated(unsigned w, unsigned h) {
-    if (!g_pending.exchange(false)) return;
-    remove(kPendingFile);
+    if (!g_pending.load() || g_windowSeen.exchange(true)) return;
     modlog::Line("DesktopSpoof: the game's window swap chain exists (" + std::to_string(w) + "x" + std::to_string(h)
-        + ") -- it starts fine at this render resolution.");
+        + "); the render resolution is kept once DLSS is created or the game has run " + std::to_string(kPendingGraceMs / 1000) + " s.");
+    std::thread([] {
+        Sleep(kPendingGraceMs);
+        ClearPending("the game has run " + std::to_string(kPendingGraceMs / 1000) + " s");
+    }).detach();
+}
+
+void DesktopSpoofDlssCreated(bool ok, unsigned outW, unsigned outH) {
+    if (ok) {
+        ClearPending("DLSS created for " + std::to_string(outW) + "x" + std::to_string(outH));
+    } else if (g_pending.load()) {
+        modlog::Line("DesktopSpoof: DLSS could NOT be created for " + std::to_string(outW) + "x" + std::to_string(outH)
+            + " -- if the game closes now, the next start steps the render resolution down.");
+    }
 }
 
 bool DesktopSpoofFallback(int* fromPct, int* toPct) {

@@ -48,6 +48,11 @@ own graphics settings.
 **Virtual Desktop users:** its quality preset multiplies with the mod's render resolution. *Godlike* renders far more
 than *Ultra* or *High*; on mid-range cards use *High* or *Ultra*.
 
+**Pimax users with a wide FOV:** the game draws one flat picture per eye, so the wider the FOV, the more of its pixels go
+to the edges and the softer the middle looks -- *Normal* FOV in Pimax Play gives a sharper centre and is lighter on the
+GPU. DLSS makes at most 8192 pixels across, so on the widest settings the render resolution stops there (the overlay
+shows "DLSS max").
+
 ## Installing
 
 1. Download `Shadow-of-the-Tomb-Raider-VR-<version>-Setup.exe` from

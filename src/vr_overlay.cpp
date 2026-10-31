@@ -432,8 +432,9 @@ std::string ResolutionText(float pct) {
     }
     const float tw = SettingGet("render.target_w"), th = SettingGet("render.target_h");
     if (tw < 640.0f) return Fmt("%.0f %%", pct) + " (size known after the next start)";
-    const float k = std::sqrt(pct / 100.0f);
-    const int w = static_cast<int>(tw * k / 8.0f + 0.5f) * 8, h = static_cast<int>(th * k / 8.0f + 0.5f) * 8;
+    unsigned w = 0, h = 0;
+    if (RenderSizeForPct(pct, tw, th, &w, &h))   // DLSS's 8192-pixel limit
+        return Fmt("%.0f %%", pct) + " (" + std::to_string(w) + " x " + std::to_string(h) + ", DLSS max)";
     // 100 % is SteamVR's own 100 % (its recommended size spread over the view the game renders): marked as such.
     // "auto": below 100 % because the mod chose it for the graphics card (a new install, until changed here).
     const char* note = std::fabs(pct - 100.0f) < 0.5f ? " = SteamVR" : SettingGet("render.resolution_auto") != 0.0f ? " auto" : "";
@@ -512,8 +513,8 @@ void StartupMessages() {
     nextCheck = now + 5000;
     const float pct = SettingGet("render.resolution_pct"), tw = SettingGet("render.target_w"), th = SettingGet("render.target_h");
     if (pct < 30.0f || tw < 640.0f) return;
-    const float k = std::sqrt(pct / 100.0f);
-    const unsigned w = static_cast<unsigned>(tw * k / 8.0f + 0.5f) * 8, h = static_cast<unsigned>(th * k / 8.0f + 0.5f) * 8;
+    unsigned w = 0, h = 0;
+    RenderSizeForPct(pct, tw, th, &w, &h);
     g_resChecked = true;
     g_restartPending = w != g_xr.eyeW || h != g_xr.eyeH;
     if (firstRun) {   // first run: the settings chosen for this PC; the restart that applies them once a level has loaded
