@@ -326,6 +326,18 @@ void CurrentDesktopMode(UINT* w, UINT* h) {
     RealDesktopMode(w, h);   // never the spoofed size: this feeds real display-mode changes
 }
 
+// The game's exclusive fullscreen is refused (1.0.2): the mod's render size is a fake desktop the monitor can't show,
+// and exclusive fullscreen would switch the monitor's mode (on Windows 10 to the fake size itself). The game keeps the
+// setting in its profile, not the registry, so it's handled here: the swap chain stays in the borderless window,
+// reported as switched.
+std::atomic<bool> g_exclusiveRefused{ false };
+std::atomic<bool> g_gameHdr{ false };
+
+void NoteGameSwapChainFormat(DXGI_FORMAT f) {
+    const bool hdr = f == DXGI_FORMAT_R10G10B10A2_UNORM || f == DXGI_FORMAT_R16G16B16A16_FLOAT;
+    if (hdr && !g_gameHdr.exchange(true)) modlog::Line("SwapChainWatch: the game's window swap chain is HDR (format " + std::to_string(f) + ")");
+}
+
 HRESULT __stdcall hkResizeTarget(IDXGISwapChain* self, const DXGI_MODE_DESC* p) {
     static std::atomic<int> n{0};
     if (p && n.fetch_add(1) < 12) {
@@ -333,6 +345,7 @@ HRESULT __stdcall hkResizeTarget(IDXGISwapChain* self, const DXGI_MODE_DESC* p) 
             + " refresh " + std::to_string(p->RefreshRate.Numerator) + "/" + std::to_string(p->RefreshRate.Denominator)
             + " caller=" + CallerRva(_ReturnAddress()));
     }
+    if (g_exclusiveRefused.load()) return S_OK;   // still in the borderless window: its size is already the game's
     if (p && IsExtraMode(p->Width, p->Height)) {
         DXGI_MODE_DESC m = *p;
         CurrentDesktopMode(&m.Width, &m.Height);
@@ -348,6 +361,7 @@ HRESULT __stdcall hkResizeBuffers(IDXGISwapChain* self, UINT count, UINT w, UINT
     LogVideoMemory(self, "before ResizeBuffers");
     HRESULT hr = g_origResizeBuffers(self, count, w, h, fmt, flags);
     LogVideoMemory(self, "after ResizeBuffers");
+    if (fmt != DXGI_FORMAT_UNKNOWN && CalledFromGame(_ReturnAddress())) NoteGameSwapChainFormat(fmt);   // HDR switched on in play
     if (n.fetch_add(1) < 12) {
         modlog::Line("SwapChainWatch: ResizeBuffers " + std::to_string(w) + "x" + std::to_string(h)
             + " count=" + std::to_string(count) + " -> hr=0x" + [&] { std::ostringstream o; o << std::hex << static_cast<unsigned>(hr); return o.str(); }()
@@ -358,6 +372,13 @@ HRESULT __stdcall hkResizeBuffers(IDXGISwapChain* self, UINT count, UINT w, UINT
 
 HRESULT __stdcall hkSetFullscreenState(IDXGISwapChain* self, BOOL fullscreen, IDXGIOutput* target) {
     static std::atomic<int> n{0};
+    if (fullscreen) {
+        if (!g_exclusiveRefused.exchange(true)) {
+            modlog::Line("SwapChainWatch: the game's exclusive fullscreen refused -- the borderless window stays (caller="
+                + CallerRva(_ReturnAddress()) + ")");
+        }
+        return S_OK;
+    }
     HRESULT hr = g_origSetFullscreenState(self, fullscreen, target);
     if (n.fetch_add(1) < 12) {
         modlog::Line("SwapChainWatch: SetFullscreenState " + std::to_string(fullscreen) + " target=" + (target ? "set" : "null")
@@ -377,7 +398,10 @@ HRESULT __stdcall hkCreateSwapChain(IDXGIFactory* self, IUnknown* device, DXGI_S
         << " windowed=" << desc->Windowed << " swapEffect=" << desc->SwapEffect << " buffers=" << desc->BufferCount
         << " flags=0x" << std::hex << desc->Flags << " caller=" << CallerRva(_ReturnAddress());
     modlog::Line(oss.str());
-    if (CalledFromGame(_ReturnAddress()) && desc->BufferDesc.Width >= 640) DesktopSpoofGameWindowCreated(desc->BufferDesc.Width, desc->BufferDesc.Height);
+    if (CalledFromGame(_ReturnAddress()) && desc->BufferDesc.Width >= 640) {
+        DesktopSpoofGameWindowCreated(desc->BufferDesc.Width, desc->BufferDesc.Height);
+        NoteGameSwapChainFormat(desc->BufferDesc.Format);
+    }
 
     // A *fullscreen* swapchain is created straight into a display mode, which
     // would fail for an injected size. Create it at the real desktop mode and
@@ -409,7 +433,10 @@ HRESULT __stdcall hkCreateSwapChainForHwnd(IDXGIFactory2* self, IUnknown* device
             << " swapEffect=" << desc->SwapEffect << " scaling=" << desc->Scaling << " buffers=" << desc->BufferCount
             << " caller=" << CallerRva(_ReturnAddress());
         modlog::Line(oss.str());
-        if (CalledFromGame(_ReturnAddress()) && desc->Width >= 640) DesktopSpoofGameWindowCreated(desc->Width, desc->Height);
+        if (CalledFromGame(_ReturnAddress()) && desc->Width >= 640) {
+            DesktopSpoofGameWindowCreated(desc->Width, desc->Height);
+            NoteGameSwapChainFormat(desc->Format);
+        }
     }
     return g_origCreateSwapChainForHwnd(self, device, hwnd, desc, fs, restrictTo, pp);
 }
@@ -732,6 +759,10 @@ bool InstallResolutionUnlockOnce() {
 
 // Swapchain/factory hooks need a throwaway swapchain (so a D3D11 device and a
 // window); call from the init thread only, never from the DXGI export wrappers.
+bool GameSwapChainHdr() {
+    return g_gameHdr.load();
+}
+
 bool InstallSwapChainWatchLate() {
     modlog::Line("SwapChainWatch: waiting for the probe-device lock.");
     std::lock_guard<std::recursive_mutex> probeLock(ProbeDeviceMutex());

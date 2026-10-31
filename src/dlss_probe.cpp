@@ -59,6 +59,7 @@ Create_t g_origCreate = nullptr;
 Ensure_t g_origEnsure = nullptr;
 
 std::atomic<uint64_t> g_evals{0}, g_resets{0}, g_nodeMask{0}, g_ensures{0};
+std::atomic<bool> g_evalHooked{false};   // DlssEvaluateCount means something
 std::atomic<uint32_t> g_lastW{0}, g_lastH{0};
 std::atomic<float> g_jxMin{1e9f}, g_jxMax{-1e9f};
 std::atomic<int> g_detailed{0};
@@ -239,6 +240,7 @@ bool DlssEyeHandles(uint64_t* left, uint64_t* right, uint32_t* outW, uint32_t* o
 bool InstallDlssProbe() {
     if (!EnsureMinHookInitialized()) return false;
     const bool a = HookAt(GameAddr::DlssEvaluate, reinterpret_cast<void*>(&HkEval), reinterpret_cast<void**>(&g_origEval), "evaluate");
+    g_evalHooked.store(a);
     const bool b = HookAt(GameAddr::DlssCreate, reinterpret_cast<void*>(&HkCreate), reinterpret_cast<void**>(&g_origCreate), "create");
     const bool c = HookAt(GameAddr::DlssEnsure, reinterpret_cast<void*>(&HkEnsure), reinterpret_cast<void**>(&g_origEnsure), "ensure");
     g_createHelper = reinterpret_cast<CreateHelper_t>(GameAddress(GameAddr::DlssCreateHelper));
@@ -248,6 +250,10 @@ bool InstallDlssProbe() {
     modlog::Line(std::string("DLSS probe: evaluate ") + (a ? "hooked" : "-") + ", create " + (b ? "hooked" : "-") + ", ensure " + (c ? "hooked" : "-")
         + " (the game's own DLSS wrappers; logging only).");
     return a || b || c;
+}
+
+int64_t DlssEvaluateCount() {
+    return g_evalHooked.load() ? static_cast<int64_t>(g_evals.load()) : -1;
 }
 
 int DlssPerEyeState() {

@@ -122,6 +122,8 @@ bool g_screenMode = false;
 constexpr float kMenuScreenScale = 0.75f;   // menus/map are drawn at 75% of the normal view size
 XrPosef g_screenPose{ {0, 0, 0, 1}, {0, 0, -1.8f} };
 float g_screenDistance = 1.8f;   // metres in front of you when switched on
+std::atomic<int> g_screenIntroRequest{ -1 };   // -1 none, 1 on, 0 off (OpenXRScreenModeForIntro)
+bool g_screenForIntro = false;                 // screen mode is on because of the opening, not the player
 float g_screenWidth = 2.6f;      // metres wide (about 72 degrees of view at 1.8 m)
 
 // Frame-timing trace (needs XR_KHR_win32_convert_performance_counter_time).
@@ -1629,7 +1631,18 @@ void SubmitStereoFrame(ID3D11Texture2D* leftEyeTexture, ID3D11Texture2D* rightEy
         // when you switched it on. The quad's aspect un-squeezes the half-SBS eye image.
         static bool deleteWasDown = false;
         const bool deleteDown = (VRMOD_DEV_KEY(VK_DELETE) & 0x8000) != 0;
-        if ((deleteDown && !deleteWasDown) || VrOverlayTakeScreenModeToggle()) {
+        const bool manualToggle = (deleteDown && !deleteWasDown) || VrOverlayTakeScreenModeToggle();
+        const int introRequest = g_screenIntroRequest.exchange(-1);
+        bool toggle = manualToggle;
+        if (manualToggle) {
+            g_screenForIntro = false;   // the player's choice from now on
+        } else if (introRequest == 1 && !g_screenMode) {
+            toggle = g_screenForIntro = true;
+        } else if (introRequest == 0 && g_screenMode && g_screenForIntro) {
+            toggle = true;
+            g_screenForIntro = false;
+        }
+        if (toggle) {
             g_screenMode = !g_screenMode;
             if (g_screenMode) {
                 const XrQuaternionf& q = views[0].pose.orientation;
@@ -1646,8 +1659,9 @@ void SubmitStereoFrame(ID3D11Texture2D* leftEyeTexture, ID3D11Texture2D* rightEy
                 g_screenPose.position = { head.x + dx * g_screenDistance, head.y, head.z + dz * g_screenDistance };
                 g_screenPose.orientation = { 0.0f, std::sin(yaw * 0.5f), 0.0f, std::cos(yaw * 0.5f) };
             }
-            modlog::Line(std::string("OpenXR: screen mode ") + (g_screenMode ? "ON (flat virtual screen)" : "OFF (immersive)"));
-            PlayCue(g_screenMode ? Cue::On : Cue::Off);
+            modlog::Line(std::string("OpenXR: screen mode ") + (g_screenMode ? "ON (flat virtual screen)" : "OFF (immersive)")
+                + (manualToggle ? "" : " for the new game's opening"));
+            if (manualToggle) PlayCue(g_screenMode ? Cue::On : Cue::Off);
         }
         deleteWasDown = deleteDown;
 
@@ -2869,6 +2883,10 @@ void UpdateOpenXR(IDXGISwapChain* swapChain) {
     if (backbuffer12) {
         backbuffer12->Release();   // GetBuffer added a reference
     }
+}
+
+void OpenXRScreenModeForIntro(bool on) {
+    g_screenIntroRequest.store(on ? 1 : 0);
 }
 
 void OpenXRNoteSwapChainDevice(IUnknown* deviceOrQueue) {

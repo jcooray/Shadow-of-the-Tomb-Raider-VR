@@ -31,6 +31,10 @@ bool ResolutionGameMode(unsigned* w, unsigned* h);
 // Swapchain/factory hooks; needs a throwaway swapchain, so init thread only.
 bool InstallSwapChainWatchLate();
 
+// The game's window swap chain is HDR (10-bit or floating-point; its HDR option on) -- the headset expects the standard
+// 8-bit image, and the overlay says so in play (1.0.2).
+bool GameSwapChainHdr();
+
 // Real system CreateDXGIFactory1 (not our own export). Defined in dxgi_exports.cpp.
 HRESULT RealCreateDXGIFactory1(REFIID riid, void** ppFactory);
 

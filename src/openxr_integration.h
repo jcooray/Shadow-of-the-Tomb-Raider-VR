@@ -28,6 +28,11 @@ void ShutdownOpenXR();
 // so the D3D12 path can bind the OpenXR session to it. Ignores D3D11 devices.
 void OpenXRNoteSwapChainDevice(IUnknown* deviceOrQueue);
 
+// Screen mode for a new game's opening (cinematic_watch.cpp, 1.0.2): on = the flat virtual screen, placed in front of
+// the player, instead of a picture fixed to the headset (it bent with the head, like VorpX -- alvaro, 2026-10-31); off =
+// back to immersive, unless the player has switched screen mode themselves in between.
+void OpenXRScreenModeForIntro(bool on);
+
 // Pipeline settings the pairing test (Ctrl+P) varies, and restores afterwards:
 //   framesAhead : GPU frames the CPU may run ahead before our copy waits (0 = no limit; key ' cycles 0..3)
 //   halfRate    : the game renders every other display slot (End toggles)

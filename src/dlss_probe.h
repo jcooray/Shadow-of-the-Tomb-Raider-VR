@@ -21,4 +21,8 @@ bool DlssPerEyeSet(bool on);
 // DLSS output size (for the foveated-DLSS host interface, cheeky_host.cpp). False otherwise.
 bool DlssEyeHandles(uint64_t* left, uint64_t* right, uint32_t* outW, uint32_t* outH);
 
+// The game's DLSS evaluates so far (none while its DLSS is off: frame warp then has no depth, foveated rendering nothing
+// to foveate -- the overlay says so, vr_overlay.cpp); -1 when the evaluate hook isn't in (unknown, not "off").
+int64_t DlssEvaluateCount();
+
 }

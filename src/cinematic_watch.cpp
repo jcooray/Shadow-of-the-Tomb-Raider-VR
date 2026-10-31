@@ -19,6 +19,8 @@
 #include "head_tracking.h"
 #include "settings.h"
 #include "aer.h"
+#include "openxr_integration.h"
+#include "vr_overlay.h"
 
 namespace vrmod {
 
@@ -322,6 +324,7 @@ uintptr_t __fastcall hkPostEvent(void* bus, uint32_t* idPtr, uint64_t a, uint64_
 // every frame, since the menu/loading logic restores it on its own schedule).
 void IntroPoll() {
     static bool turnedOff = false;
+    static bool onScreen = false;   // screen mode asked for (OpenXRScreenModeForIntro)
     static double notCinematicSinceMs = 0.0;
     const int n = g_introCinematic.load();
     if (n == 0) return;
@@ -338,11 +341,22 @@ void IntroPoll() {
             turnedOff = false;
             SetHeadTrackingEnabled(true);
         }
+        if (onScreen) {
+            onScreen = false;
+            OpenXRScreenModeForIntro(false);
+        }
         return;
     }
     if (IsHeadTrackingEnabled()) {
         SetHeadTrackingEnabled(false);
         turnedOff = true;
+    }
+    // Shown on the flat virtual screen rather than fixed to the headset, where it bent with the head like VorpX and
+    // was taken for the whole mod (alvaro, 2026-10-31), and the player is told when VR begins.
+    if (!onScreen) {
+        onScreen = true;
+        OpenXRScreenModeForIntro(true);
+        VrOverlayNotify("The opening plays on a screen. VR starts when Lara reaches the gorge.", 12);
     }
 }
 

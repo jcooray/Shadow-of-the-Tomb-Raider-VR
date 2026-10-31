@@ -174,6 +174,14 @@ bool HookApi(const wchar_t* module, const char* proc, void* detour, void** origi
 } // namespace
 
 void RealDesktopMode(UINT* w, UINT* h) {
+    // Recorded before the enumeration hooks existed. Asking again later isn't safe: on Windows 10 (alvaro, 2026-10-31)
+    // EnumDisplaySettingsW's trampoline went on into the hooked EnumDisplaySettingsExW and came back with the fake size,
+    // so an exclusive-fullscreen ResizeTarget was "remapped" to 4120x4280 -- a mode the monitor doesn't have.
+    if (g_realW && g_realH) {
+        *w = g_realW;
+        *h = g_realH;
+        return;
+    }
     DEVMODEW dm{};
     dm.dmSize = sizeof(dm);
     EnumDisplaySettingsW_t fn = g_origEnumW ? g_origEnumW : &EnumDisplaySettingsW;
@@ -255,9 +263,84 @@ void ApplyGameStereoSetting() {
     }
 }
 
+// The game's own settings the mod depends on (1.0.2), a best effort before the game reads them: only values that are
+// there and differ are changed, and each change is logged. The game keeps most of its graphics settings in its profile
+// and writes the registry back when it quits (tested 2026-10-31: DLSS 0 here, yet the game ran DLSS Quality), so each
+// one that matters is also handled where it takes effect: exclusive fullscreen by the swap chain hook (the window stays
+// borderless), VSync by hkPresent (always sync interval 0), DLSS off by a notice in play (vr_overlay.cpp).
+void ApplyGameSettings() {
+    const wchar_t* key = L"Software\\Eidos Montreal\\Shadow of the Tomb Raider\\Graphics";
+    const auto force = [key](const wchar_t* name, const char* label, DWORD want, const char* why) {
+        DWORD v = 0, size = sizeof(v);
+        if (RegGetValueW(HKEY_CURRENT_USER, key, name, RRF_RT_REG_DWORD, nullptr, &v, &size) != ERROR_SUCCESS) return;
+        if (v == want) return;
+        const bool ok = RegSetKeyValueW(HKEY_CURRENT_USER, key, name, REG_DWORD, &want, sizeof(want)) == ERROR_SUCCESS;
+        modlog::Line(std::string("GameSettings: ") + label + " " + std::to_string(v) + " -> " + std::to_string(want)
+                     + (ok ? " (" : " FAILED (") + why + ")");
+    };
+    force(L"EnableDX12", "DirectX 12", 1, "the mod works on the game's DirectX 12 renderer");
+    force(L"HDR", "HDR", 0, "the headset gets the game's standard 8-bit image");
+}
+
+// The displays Windows reports (adapters, monitors, current modes) -- e.g. a streaming app's virtual monitor -- and, while
+// the fake desktop is active, the game's display-mode changes and big windows: a start that fails between reading the
+// display modes and creating its window (Quest 3 over Virtual Desktop, 2026-10-31) then shows how far it got.
+void LogDisplays() {
+    for (DWORD i = 0;; ++i) {
+        DISPLAY_DEVICEW dd{};
+        dd.cb = sizeof(dd);
+        if (!EnumDisplayDevicesW(nullptr, i, &dd, 0)) break;
+        if (!(dd.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP)) continue;
+        DEVMODEW dm{};
+        dm.dmSize = sizeof(dm);
+        EnumDisplaySettingsExW(dd.DeviceName, ENUM_CURRENT_SETTINGS, &dm, 0);
+        DISPLAY_DEVICEW mon{};
+        mon.cb = sizeof(mon);
+        const bool haveMon = EnumDisplayDevicesW(dd.DeviceName, 0, &mon, 0) != 0;
+        char line[512];
+        snprintf(line, sizeof(line), "DISPLAY: %ls '%ls'%s %lux%lu @ %lu Hz at (%ld,%ld), monitor '%ls'", dd.DeviceName, dd.DeviceString,
+                 (dd.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE) ? " primary" : "", dm.dmPelsWidth, dm.dmPelsHeight,
+                 dm.dmDisplayFrequency, dm.dmPosition.x, dm.dmPosition.y, haveMon ? mon.DeviceString : L"?");
+        modlog::Line(line);
+    }
+}
+
+using ChangeDisplaySettingsExW_t = LONG(WINAPI*)(LPCWSTR, DEVMODEW*, HWND, DWORD, LPVOID);
+using CreateWindowExW_t = HWND(WINAPI*)(DWORD, LPCWSTR, LPCWSTR, DWORD, int, int, int, int, HWND, HMENU, HINSTANCE, LPVOID);
+ChangeDisplaySettingsExW_t g_origChangeDisplaySettingsExW = nullptr;
+CreateWindowExW_t g_origCreateWindowExW = nullptr;
+
+// A display-mode change to the fake desktop's size would ask the monitor for a mode it doesn't have: refused (reported
+// as done), as the borderless window needs no mode change at all.
+LONG WINAPI hkChangeDisplaySettingsExW(LPCWSTR dev, DEVMODEW* dm, HWND hwnd, DWORD flags, LPVOID param) {
+    const bool fake = dm && (dm->dmFields & (DM_PELSWIDTH | DM_PELSHEIGHT)) && dm->dmPelsWidth == g_fakeW && dm->dmPelsHeight == g_fakeH;
+    static std::atomic<int> n{ 0 };
+    if (n.fetch_add(1) < 8) {
+        modlog::Line("DISPLAY: the game asks for a display-mode change" + (dm ? " to " + std::to_string(dm->dmPelsWidth) + "x"
+            + std::to_string(dm->dmPelsHeight) : std::string(" back to the registry's mode")) + (fake ? " -- the fake desktop's size: refused" : ""));
+    }
+    if (fake) return DISP_CHANGE_SUCCESSFUL;
+    return g_origChangeDisplaySettingsExW(dev, dm, hwnd, flags, param);
+}
+
+HWND WINAPI hkCreateWindowExW(DWORD ex, LPCWSTR cls, LPCWSTR name, DWORD style, int x, int y, int w, int h, HWND parent, HMENU menu,
+                              HINSTANCE inst, LPVOID param) {
+    const HWND hwnd = g_origCreateWindowExW(ex, cls, name, style, x, y, w, h, parent, menu, inst, param);
+    static std::atomic<int> n{ 0 };
+    if (!parent && w >= 640 && h >= 480 && n.fetch_add(1) < 8) {
+        char line[256];
+        snprintf(line, sizeof(line), "WINDOW: %ls %dx%d at (%d,%d), style 0x%lx -> %s", name ? name : L"(no title)", w, h, x, y, style,
+                 hwnd ? "created" : "FAILED");
+        modlog::Line(line);
+    }
+    return hwnd;
+}
+
 bool InstallDesktopSpoof() {
     ApplyGameStereoSetting();
+    ApplyGameSettings();
     LogGameMessages();
+    LogDisplays();
     unsigned w = 0, h = 0;
     if (ResolutionFromSettings(&w, &h)) {
         g_fakeW = w;
@@ -285,6 +368,8 @@ bool InstallDesktopSpoof() {
     ok &= HookApi(L"user32", "EnumDisplaySettingsExW", reinterpret_cast<void*>(&hkEnumDisplaySettingsExW), reinterpret_cast<void**>(&g_origEnumExW));
     ok &= HookApi(L"user32", "GetMonitorInfoW", reinterpret_cast<void*>(&hkGetMonitorInfoW), reinterpret_cast<void**>(&g_origGetMonitorInfoW));
     ok &= HookApi(L"user32", "GetSystemMetrics", reinterpret_cast<void*>(&hkGetSystemMetrics), reinterpret_cast<void**>(&g_origGetSystemMetrics));
+    HookApi(L"user32", "ChangeDisplaySettingsExW", reinterpret_cast<void*>(&hkChangeDisplaySettingsExW), reinterpret_cast<void**>(&g_origChangeDisplaySettingsExW));
+    HookApi(L"user32", "CreateWindowExW", reinterpret_cast<void*>(&hkCreateWindowExW), reinterpret_cast<void**>(&g_origCreateWindowExW));
     // Only worth spoofing when the fake desktop's shape differs from 16:9; otherwise leave GDI alone.
     const double fakeAspect = static_cast<double>(g_fakeW) / static_cast<double>(g_fakeH);
     if (fakeAspect < 1.74 || fakeAspect > 1.82) {

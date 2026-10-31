@@ -1247,19 +1247,17 @@ void ShowAutoSettingsNotice(bool restartLater, float pct) {
 }
 
 // The last start at a render resolution never reached the game's window, so this one stepped down by itself
-// (desktop_spoof.cpp). Said once play has gone on for 3 s, as a notice A dismisses: a timed message at the title menu was
-// placed where the headset pointed while the player was still putting it on, and missed (2026-10-31).
+// (desktop_spoof.cpp). Said once the game has been showing for 5 s, title screen included, as a notice A dismisses: it
+// stays until then, so a player who starts the game from the desktop and puts the headset on later still sees it (a
+// timed message at the title menu was missed that way, 2026-10-31).
 void ResolutionFallbackPrompt(ULONGLONG now) {
     static bool done = false;
-    static ULONGLONG playSince = 0;
+    static ULONGLONG last = 0, showing = 0;   // ms the game has been showing
     int fromPct = 0, toPct = 0;
     if (done || !DesktopSpoofFallback(&fromPct, &toPct)) return;
-    if (g_open || now < g_toastUntil || !g_xr.eyeW || MenuScreenActive() || CinematicActive() || !IsHeadTrackingEnabled()) {
-        playSince = 0;
-        return;
-    }
-    if (!playSince) playSince = now;
-    if (now - playSince < 3000) return;
+    if (g_xr.eyeW && !CinematicActive() && last) showing += (std::min)(now - last, 200ULL);
+    last = now;
+    if (showing < 5000 || g_open || now < g_toastUntil) return;
     done = true;
     ShowFirstRunNotice("Render resolution lowered",
                        "Last time the game didn't start at the " + std::to_string(fromPct) + " % render resolution, so this start uses "
@@ -1268,6 +1266,32 @@ void ResolutionFallbackPrompt(ULONGLONG now) {
                        "steps down again by itself.",
                        "A / Enter: OK", nullptr);
     modlog::Line("OVERLAY: render resolution lowered notice (the last start never reached the game's window)");
+}
+
+// The game's own settings the mod needs but can't set from outside (1.0.2): the game keeps them in its profile. Checked
+// from the start, title screen included -- its background renders through DLSS -- so the notice comes up where the
+// player can change them straight away (Options is on the title screen): DLSS off = not one evaluate in the first 15 s
+// the game is showing (videos and cutscenes not counted; frame warp then has no depth, the eye pairing loses DLSS's
+// frame check -- depth looked inside out, 2026-10-31 -- and foveated rendering has nothing to work on), HDR = the
+// window's image format. One notice, which A dismisses (it stays until then, headset on or not).
+void GameSettingsPrompt(ULONGLONG now) {
+    static bool done = false;
+    static ULONGLONG last = 0, showing = 0;   // ms the game has been showing
+    if (done) return;
+    if (g_xr.eyeW && !CinematicActive() && last) showing += (std::min)(now - last, 200ULL);
+    last = now;
+    if (showing < 15000 || g_open || now < g_toastUntil) return;
+    done = true;
+    const bool dlssOff = DlssEvaluateCount() == 0, hdr = GameSwapChainHdr();   // -1: the evaluate hook isn't in, unknown
+    if (!dlssOff && !hdr) return;
+    std::string text;
+    if (dlssOff) text += "DLSS is off in the game. The mod needs it: without DLSS the 3D can look wrong (shaking, or depth inside out), "
+                         "and foveated rendering doesn't work. Turn on DLSS (Quality) in the game's Options, Display. ";
+    if (hdr) text += "HDR is on in the game: the headset expects the standard image, so colours may be wrong. Turn HDR off in the "
+                     "game's Options, Display. ";
+    text += "The game keeps these settings itself, so the mod can't change them for you.";
+    ShowFirstRunNotice("Game settings to change", text, "A / Enter: OK", nullptr);
+    modlog::Line(std::string("OVERLAY: game settings notice --") + (dlssOff ? " DLSS off" : "") + (hdr ? " HDR on" : ""));
 }
 
 // First run, once a level has loaded and play has gone on for 3 s: restart, to apply the render resolution. The game asks
@@ -1737,6 +1761,7 @@ void VrOverlayTick() {
     OverlayPadBlockGame(g_open || g_releaseHold);
     StartupMessages();
     ResolutionFallbackPrompt(now);
+    GameSettingsPrompt(now);
     FirstRestartPrompt(now);
     FirstWorldSizePrompt(now);
 
