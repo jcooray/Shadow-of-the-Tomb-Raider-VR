@@ -1,5 +1,7 @@
 #include "gpu_tier.h"
 
+#include "logger.h"
+
 #include "settings.h"
 
 #include <dxgi1_2.h>
@@ -49,6 +51,55 @@ double PerMpixMs(Foveation fov) {
 }
 
 }  // namespace
+
+void LogSystemInfo() {
+    wchar_t sys[MAX_PATH] = {};
+    GetSystemDirectoryW(sys, MAX_PATH);
+    if (const HMODULE dxgi = LoadLibraryW((std::wstring(sys) + L"\\dxgi.dll").c_str())) {   // the system DXGI, not this mod
+        using CreateFactory1 = HRESULT(WINAPI*)(REFIID, void**);
+        const auto create = reinterpret_cast<CreateFactory1>(GetProcAddress(dxgi, "CreateDXGIFactory1"));
+        IDXGIFactory1* factory = nullptr;
+        if (create && SUCCEEDED(create(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&factory)))) {
+            IDXGIAdapter1* adapter = nullptr;
+            for (UINT i = 0; factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i) {
+                DXGI_ADAPTER_DESC1 d{};
+                LARGE_INTEGER umd{};
+                const bool desc = SUCCEEDED(adapter->GetDesc1(&d));
+                const bool ver = SUCCEEDED(adapter->CheckInterfaceSupport(__uuidof(IDXGIDevice), &umd));
+                adapter->Release();
+                if (!desc || (d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) continue;
+                char name[128] = {};
+                WideCharToMultiByte(CP_UTF8, 0, d.Description, -1, name, sizeof(name) - 1, nullptr, nullptr);
+                std::string line = std::string("SYSTEM: graphics card '") + name + "', " + std::to_string(d.DedicatedVideoMemory >> 20) + " MB";
+                if (ver) {
+                    const unsigned a = HIWORD(umd.HighPart), b = LOWORD(umd.HighPart), c = HIWORD(umd.LowPart), e = LOWORD(umd.LowPart);
+                    line += ", driver " + std::to_string(a) + "." + std::to_string(b) + "." + std::to_string(c) + "." + std::to_string(e);
+                    if (d.VendorId == 0x10DE) {   // NVIDIA's own numbering: the last five digits, e.g. 32.0.15.6094 -> 560.94
+                        const unsigned n = (c % 10) * 10000 + e;
+                        line += " (NVIDIA " + std::to_string(n / 100) + "." + (n % 100 < 10 ? "0" : "") + std::to_string(n % 100) + ")";
+                    }
+                }
+                modlog::Line(line);
+            }
+            factory->Release();
+        }
+        FreeLibrary(dxgi);
+    }
+    char build[32] = {};
+    DWORD size = sizeof(build);
+    RegGetValueA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", "CurrentBuild", RRF_RT_REG_SZ, nullptr, build, &size);
+    wchar_t exe[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    std::wstring ini(exe);
+    ini = ini.substr(0, ini.find_last_of(L'\\') + 1) + L"vrmod_settings.ini";
+    wchar_t headset[160] = {};
+    GetPrivateProfileStringW(L"render", L"headset", L"", headset, 160, ini.c_str());
+    char hs[320] = {};
+    WideCharToMultiByte(CP_UTF8, 0, headset, -1, hs, sizeof(hs) - 1, nullptr, nullptr);
+    modlog::Line(std::string("SYSTEM: Windows build ") + (build[0] ? build : "?") + ", headset of the last VR session: "
+        + (hs[0] ? hs : "none yet") + ", render target " + std::to_string(static_cast<int>(SettingGet("render.target_w"))) + "x"
+        + std::to_string(static_cast<int>(SettingGet("render.target_h"))) + " at " + std::to_string(static_cast<int>(SettingGet("render.resolution_pct"))) + " %");
+}
 
 GpuInfo GpuInfoForLuid(LUID luid) {
     GpuInfo g;

@@ -28,4 +28,11 @@ bool DesktopSpoofAspectOverridden();
 // The fake desktop's size (the swapchain the game is asked for); false when the spoof isn't active.
 bool DesktopSpoofSize(unsigned* w, unsigned* h);
 
+// The game created its window swap chain (any size, called from SOTTR.exe): this start's render resolution works, so the
+// next start keeps it. Without this, the next start steps the render resolution down (desktop_spoof.cpp, self-healing).
+void DesktopSpoofGameWindowCreated(unsigned w, unsigned h);
+// This start stepped the render resolution down because the last one never reached the game's window: from that
+// percentage to 100 %, or to 0 = the game's own resolution. False when it didn't.
+bool DesktopSpoofFallback(int* fromPct, int* toPct);
+
 } // namespace vrmod

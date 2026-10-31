@@ -386,6 +386,8 @@ bool InitOpenXR(ID3D11Device* device, uint32_t eyeW12 = 0, uint32_t eyeH12 = 0) 
         }
         if (XR_SUCCEEDED(xrGetSystemProperties(g_instance, g_systemId, &sysProps))) {
             g_systemName = sysProps.systemName;
+            // For the next start's log (LogSystemInfo), which may end before VR begins.
+            SettingsWriteKeys({ { "render.headset", g_systemName + " (" + g_runtimeName + ")" } });
             modlog::Line(std::string("OpenXR: system '") + sysProps.systemName + "', vendor id " + std::to_string(sysProps.vendorId)
                 + ", eye gaze extension " + (g_eyeGazeExtensionEnabled ? "offered" : "NOT offered by the runtime")
                 + (g_eyeGazeExtensionEnabled ? (eyeProps.supportsEyeGazeInteraction ? ", headset reports eye tracking SUPPORTED" : ", headset reports eye tracking NOT supported") : ""));

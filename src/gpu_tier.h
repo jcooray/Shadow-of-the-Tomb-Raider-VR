@@ -20,6 +20,11 @@ GpuInfo GpuInfoForLuid(LUID luid);
 // The name of the graphics card the headset renders on, once GpuInfoForLuid has run ("" before).
 std::string DetectedGpuName();
 
+// At the start of every log: the graphics cards (name, video memory, driver), the Windows build and the headset of the
+// last VR session ([render] headset, written by the OpenXR side) -- so a log from a start that fails before VR begins
+// still says what it ran on (1.0.1). Through the system DXGI, no device is created.
+void LogSystemInfo();
+
 // Foveated rendering (CheekyFoveatedDLSS) foveates only the DLSS pass -- the game's own rendering is unchanged -- so it
 // changes the GPU time per frame by a part of DLSS's cost: very little fixed (its large sharp region needs two DLSS
 // passes), much more eye tracked (a small one); DLSS 5 (neural rendering) on top takes most of that back.

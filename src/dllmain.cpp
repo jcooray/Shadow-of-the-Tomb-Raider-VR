@@ -5,6 +5,7 @@
 #pragma comment(lib, "winmm.lib")
 
 #include "cheeky_loader.h"
+#include "gpu_tier.h"
 #include "settings.h"
 #include "logger.h"
 #include "present_hook.h"
@@ -63,6 +64,7 @@ DWORD WINAPI InitThread(LPVOID) {
         modlog::Line("Resolution unlock installation failed (or partially failed).");
     }
     vrmod::InstallUiProbe();   // Brief 2 H0, only with [debug] ui_probe=1 (after the unlock: never delay it)
+    vrmod::LogSystemInfo();    // graphics cards, Windows, the last headset (after the unlock: never delay it)
 
     if (!vrmod::InstallPresentHook()) {
         modlog::Line("Present hook installation failed; mod is inert but the game should still run normally.");

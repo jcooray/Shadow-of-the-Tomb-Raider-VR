@@ -19,6 +19,7 @@
 #include "build_config.h"
 #include "camera_interceptor.h"
 #include "cinematic_watch.h"
+#include "desktop_spoof.h"
 #include "dlss_probe.h"
 #include "eye_gaze.h"
 #include "game_addresses.h"
@@ -1245,6 +1246,30 @@ void ShowAutoSettingsNotice(bool restartLater, float pct) {
     modlog::Line(std::string("OVERLAY: auto settings notice") + (restartLater ? " (the restart is asked for once a level has loaded)" : ""));
 }
 
+// The last start at a render resolution never reached the game's window, so this one stepped down by itself
+// (desktop_spoof.cpp). Said once play has gone on for 3 s, as a notice A dismisses: a timed message at the title menu was
+// placed where the headset pointed while the player was still putting it on, and missed (2026-10-31).
+void ResolutionFallbackPrompt(ULONGLONG now) {
+    static bool done = false;
+    static ULONGLONG playSince = 0;
+    int fromPct = 0, toPct = 0;
+    if (done || !DesktopSpoofFallback(&fromPct, &toPct)) return;
+    if (g_open || now < g_toastUntil || !g_xr.eyeW || MenuScreenActive() || CinematicActive() || !IsHeadTrackingEnabled()) {
+        playSince = 0;
+        return;
+    }
+    if (!playSince) playSince = now;
+    if (now - playSince < 3000) return;
+    done = true;
+    ShowFirstRunNotice("Render resolution lowered",
+                       "Last time the game didn't start at the " + std::to_string(fromPct) + " % render resolution, so this start uses "
+                       + (toPct ? std::string("100 %") : std::string("the game's own resolution")) + ". To try another, change Render "
+                       "resolution on the Rendering page of this overlay (Guide + Menu); if the game then doesn't start, the next start "
+                       "steps down again by itself.",
+                       "A / Enter: OK", nullptr);
+    modlog::Line("OVERLAY: render resolution lowered notice (the last start never reached the game's window)");
+}
+
 // First run, once a level has loaded and play has gone on for 3 s: restart, to apply the render resolution. The game asks
 // to confirm its quit message (only in a level); then the player starts it again.
 void FirstRestartPrompt(ULONGLONG now) {
@@ -1711,6 +1736,7 @@ void VrOverlayTick() {
     if (g_releaseHold && pad.buttons == 0 && pad.lt < 30 && pad.rt < 30) g_releaseHold = false;
     OverlayPadBlockGame(g_open || g_releaseHold);
     StartupMessages();
+    ResolutionFallbackPrompt(now);
     FirstRestartPrompt(now);
     FirstWorldSizePrompt(now);
 

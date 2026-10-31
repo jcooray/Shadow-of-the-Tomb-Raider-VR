@@ -151,6 +151,13 @@ void AppendExtraModes(std::vector<Desc>* modes, UINT* outMaxW, UINT* outMaxH, si
 
 // Module-relative address of the game code that called into us, so the code
 // that consumes (and filters) the mode list can be found in Ghidra.
+// Called from SOTTR.exe itself (not the mod's own or an overlay's throwaway swap chains).
+bool CalledFromGame(void* returnAddress) {
+    const auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    const auto ra = reinterpret_cast<uintptr_t>(returnAddress);
+    return ra >= base && ra < base + 0x10000000;
+}
+
 std::string CallerRva(void* returnAddress) {
     auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     auto ra = reinterpret_cast<uintptr_t>(returnAddress);
@@ -370,6 +377,7 @@ HRESULT __stdcall hkCreateSwapChain(IDXGIFactory* self, IUnknown* device, DXGI_S
         << " windowed=" << desc->Windowed << " swapEffect=" << desc->SwapEffect << " buffers=" << desc->BufferCount
         << " flags=0x" << std::hex << desc->Flags << " caller=" << CallerRva(_ReturnAddress());
     modlog::Line(oss.str());
+    if (CalledFromGame(_ReturnAddress()) && desc->BufferDesc.Width >= 640) DesktopSpoofGameWindowCreated(desc->BufferDesc.Width, desc->BufferDesc.Height);
 
     // A *fullscreen* swapchain is created straight into a display mode, which
     // would fail for an injected size. Create it at the real desktop mode and
@@ -401,6 +409,7 @@ HRESULT __stdcall hkCreateSwapChainForHwnd(IDXGIFactory2* self, IUnknown* device
             << " swapEffect=" << desc->SwapEffect << " scaling=" << desc->Scaling << " buffers=" << desc->BufferCount
             << " caller=" << CallerRva(_ReturnAddress());
         modlog::Line(oss.str());
+        if (CalledFromGame(_ReturnAddress()) && desc->Width >= 640) DesktopSpoofGameWindowCreated(desc->Width, desc->Height);
     }
     return g_origCreateSwapChainForHwnd(self, device, hwnd, desc, fs, restrictTo, pp);
 }

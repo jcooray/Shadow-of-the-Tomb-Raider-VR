@@ -12,7 +12,7 @@
 
 #define AppName "Shadow of the Tomb Raider VR"
 #ifndef AppVersion
-  #define AppVersion "1.0.0"
+  #define AppVersion "1.0.1"
 #endif
 #define AppUrl "https://github.com/jcooray/Shadow-of-the-Tomb-Raider-VR"
 
@@ -81,6 +81,7 @@ Type: files; Name: "{app}\vrmod.prev1.log"
 Type: files; Name: "{app}\vrmod.prev2.log"
 Type: files; Name: "{app}\vrmod.prev3.log"
 Type: files; Name: "{app}\vrmod_settings.ini.tmp"
+Type: files; Name: "{app}\vrmod_resolution_pending.txt"
 Type: files; Name: "{app}\CheekyFoveatedDLSS\*.log"
 Type: dirifempty; Name: "{app}\CheekyFoveatedDLSS"
 Type: dirifempty; Name: "{app}\SOTTR-VR"

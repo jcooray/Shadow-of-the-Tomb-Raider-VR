@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <tuple>
 
 #include "logger.h"
 #include "present_hook.h"
@@ -20,6 +21,16 @@ constexpr size_t kOutputGetDescIndex = 7;   // IDXGIOutput::GetDesc (IUnknown 0-
 bool g_active = false;
 UINT g_fakeW = 7680;
 UINT g_fakeH = 4320;
+
+// Self-healing render resolution (1.0.1, 2026-10-31). 1.0.0 players whose game closed itself at start-up at the render
+// resolution the mod chose (before creating its window: alvaro, 5048x5240 on a 3840x2160 monitor) were stuck until they
+// deleted vrmod_settings.ini. Every start that applies a render resolution leaves this file until the game's window swap
+// chain exists; finding it at the next start means that start never got there, so this one steps down -- to 100 %, then
+// to the game's own resolution -- and the overlay says so.
+constexpr const char* kPendingFile = "vrmod_resolution_pending.txt";
+std::atomic<bool> g_pending{false};
+int g_fallbackFrom = 0;
+int g_fallbackTo = -1;   // -1: no fallback this start; 0: the game's own resolution
 
 using EnumDisplaySettingsW_t = BOOL(WINAPI*)(LPCWSTR, DWORD, DEVMODEW*);
 using EnumDisplaySettingsExW_t = BOOL(WINAPI*)(LPCWSTR, DWORD, DEVMODEW*, DWORD);
@@ -119,6 +130,39 @@ HRESULT __stdcall hkOutputGetDesc(IDXGIOutput* self, DXGI_OUTPUT_DESC* desc) {
     return hr;
 }
 
+// The game's own error boxes, logged (1.0.1): a game that closes itself at start-up usually says why first, and players'
+// logs then show it.
+using MessageBoxW_t = int(WINAPI*)(HWND, LPCWSTR, LPCWSTR, UINT);
+using MessageBoxA_t = int(WINAPI*)(HWND, LPCSTR, LPCSTR, UINT);
+MessageBoxW_t g_origMessageBoxW = nullptr;
+MessageBoxA_t g_origMessageBoxA = nullptr;
+
+std::string Utf8(LPCWSTR s) {
+    if (!s) return {};
+    char buf[1024] = {};
+    WideCharToMultiByte(CP_UTF8, 0, s, -1, buf, sizeof(buf) - 1, nullptr, nullptr);
+    return buf;
+}
+
+int WINAPI hkMessageBoxW(HWND hwnd, LPCWSTR text, LPCWSTR caption, UINT type) {
+    modlog::Line("GAME MESSAGE: \"" + Utf8(caption) + "\": " + Utf8(text));
+    return g_origMessageBoxW(hwnd, text, caption, type);
+}
+
+int WINAPI hkMessageBoxA(HWND hwnd, LPCSTR text, LPCSTR caption, UINT type) {
+    modlog::Line(std::string("GAME MESSAGE: \"") + (caption ? caption : "") + "\": " + (text ? text : ""));
+    return g_origMessageBoxA(hwnd, text, caption, type);
+}
+
+void LogGameMessages() {
+    if (!EnsureMinHookInitialized()) return;
+    for (auto [proc, detour, original] : { std::tuple{ "MessageBoxW", reinterpret_cast<void*>(&hkMessageBoxW), reinterpret_cast<void**>(&g_origMessageBoxW) },
+                                            std::tuple{ "MessageBoxA", reinterpret_cast<void*>(&hkMessageBoxA), reinterpret_cast<void**>(&g_origMessageBoxA) } }) {
+        void* target = nullptr;
+        if (MH_CreateHookApiEx(L"user32", proc, detour, original, &target) == MH_OK) MH_EnableHook(target);
+    }
+}
+
 bool HookApi(const wchar_t* module, const char* proc, void* detour, void** original) {
     if (MH_CreateHookApiEx(module, proc, detour, original, nullptr) != MH_OK) {
         modlog::Line(std::string("DesktopSpoof: failed to hook ") + proc);
@@ -146,14 +190,42 @@ void RealDesktopMode(UINT* w, UINT* h) {
 // render size (render.target_w / target_h, recorded by the OpenXR side) -- SteamVR's convention: 150 % = 1.22 x each side. Applied here, before the game reads its settings: the fake
 // desktop gets that size, and the game's saved fullscreen resolution is set to it (so the game starts at it).
 bool ResolutionFromSettings(unsigned* w, unsigned* h) {
-    const float pct = SettingGet("render.resolution_pct");
+    float pct = SettingGet("render.resolution_pct");
     const float tw = SettingGet("render.target_w"), th = SettingGet("render.target_h");
     if (pct < 30.0f || tw < 640.0f || th < 480.0f) return false;
+    const wchar_t* key = L"Software\\Eidos Montreal\\Shadow of the Tomb Raider\\Graphics";
+    FILE* f = nullptr;
+    if (fopen_s(&f, kPendingFile, "r") == 0 && f) {   // the last start at a render resolution never reached the game's window
+        int last = 0;
+        if (fscanf_s(f, "%d", &last) != 1 || last < 30) last = static_cast<int>(pct);
+        fclose(f);
+        remove(kPendingFile);
+        g_fallbackFrom = last;
+        g_fallbackTo = last > 100 ? 100 : 0;
+        SettingSet("render.resolution_pct", static_cast<float>(g_fallbackTo));
+        SettingSet("render.resolution_auto", 0.0f);   // not chosen again for the graphics card
+        SettingsWriteKeys({ { "render.resolution_pct", std::to_string(g_fallbackTo) }, { "render.resolution_auto", "0" } });
+        modlog::Line("DesktopSpoof: the last start at render resolution " + std::to_string(last) + " % never reached the game's window "
+            "(the game closed itself?) -- " + (g_fallbackTo ? std::string("100 % this time") : std::string("the game's own resolution this time")));
+        if (!g_fallbackTo) {   // the game's fullscreen resolution back to the monitor's, which it starts at by itself
+            UINT rw = 0, rh = 0;
+            RealDesktopMode(&rw, &rh);
+            const DWORD dw = rw, dh = rh;
+            RegSetKeyValueW(HKEY_CURRENT_USER, key, L"FullscreenWidth", REG_DWORD, &dw, sizeof(dw));
+            RegSetKeyValueW(HKEY_CURRENT_USER, key, L"FullscreenHeight", REG_DWORD, &dh, sizeof(dh));
+            return false;
+        }
+        pct = static_cast<float>(g_fallbackTo);
+    }
     const float k = std::sqrt(pct / 100.0f);
     *w = static_cast<unsigned>(tw * k / 8.0f + 0.5f) * 8;
     *h = static_cast<unsigned>(th * k / 8.0f + 0.5f) * 8;
     if (*w < 640 || *h < 480 || *w > 16384 || *h > 16384) return false;
-    const wchar_t* key = L"Software\\Eidos Montreal\\Shadow of the Tomb Raider\\Graphics";
+    if (fopen_s(&f, kPendingFile, "w") == 0 && f) {   // removed once the game's window swap chain exists
+        fprintf(f, "%d %ux%u\n", static_cast<int>(pct), *w, *h);
+        fclose(f);
+        g_pending.store(true);
+    }
     const DWORD dw = *w, dh = *h, one = 1;
     const bool ok = RegSetKeyValueW(HKEY_CURRENT_USER, key, L"FullscreenWidth", REG_DWORD, &dw, sizeof(dw)) == ERROR_SUCCESS
         && RegSetKeyValueW(HKEY_CURRENT_USER, key, L"FullscreenHeight", REG_DWORD, &dh, sizeof(dh)) == ERROR_SUCCESS
@@ -185,10 +257,13 @@ void ApplyGameStereoSetting() {
 
 bool InstallDesktopSpoof() {
     ApplyGameStereoSetting();
+    LogGameMessages();
     unsigned w = 0, h = 0;
     if (ResolutionFromSettings(&w, &h)) {
         g_fakeW = w;
         g_fakeH = h;
+    } else if (g_fallbackTo == 0) {
+        return true;   // the self-healing last step: the game's own resolution, no fake desktop (not even vrmod_fakedesktop.txt's)
     } else {
         FILE* f = nullptr;
         if (fopen_s(&f, "vrmod_fakedesktop.txt", "r") != 0 || !f) {
@@ -230,6 +305,19 @@ bool DesktopSpoofSize(unsigned* w, unsigned* h) {
     *w = g_fakeW;
     *h = g_fakeH;
     return g_active;
+}
+
+void DesktopSpoofGameWindowCreated(unsigned w, unsigned h) {
+    if (!g_pending.exchange(false)) return;
+    remove(kPendingFile);
+    modlog::Line("DesktopSpoof: the game's window swap chain exists (" + std::to_string(w) + "x" + std::to_string(h)
+        + ") -- it starts fine at this render resolution.");
+}
+
+bool DesktopSpoofFallback(int* fromPct, int* toPct) {
+    *fromPct = g_fallbackFrom;
+    *toPct = g_fallbackTo;
+    return g_fallbackTo >= 0;
 }
 
 bool DesktopSpoofAspectOverridden() {
