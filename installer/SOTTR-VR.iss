@@ -7,12 +7,16 @@
 ;     fixed or eye tracked -- vrmod_settings.ini [foveation] mode, and the sharp region's size in Cheeky's ini -- and with
 ;     eye tracking optionally DLSS 5: NVIDIA's nvngx_dlssnr.dll is never shipped; Setup copies one the PC already has
 ;     (from another game) into the game folder, and removes only that copy again;
+;   - on a PC without an NVIDIA RTX card (or /OPTISCALER=1), optionally FSR through OptiScaler: the mod needs the game's
+;     DLSS calls, and OptiScaler makes the game's DLSS run AMD's FSR. Setup downloads the tested OptiScaler release from
+;     its official GitHub page (SHA-256 checked; nothing of it is shipped) and installs only what's needed, as
+;     dbghelp.dll (the mod is dxgi.dll); an OptiScaler the player installed is left alone;
 ;   - uninstalls cleanly: our files and logs, optionally the settings, the moved files back, and the game's saved
 ;     fullscreen resolution reset to the desktop's (the mod sets it to the headset's size).
 
 #define AppName "Shadow of the Tomb Raider VR"
 #ifndef AppVersion
-  #define AppVersion "1.0.5"
+  #define AppVersion "1.0.6"
 #endif
 #define AppUrl "https://github.com/jcooray/Shadow-of-the-Tomb-Raider-VR"
 
@@ -47,6 +51,8 @@ SolidCompression=yes
 WizardStyle=modern
 ; Room for the foveated rendering page's descriptions.
 WizardSizePercent=130
+; OptiScaler's release is a .7z archive (ExtractArchive in [Code]).
+ArchiveExtraction=full
 UninstallDisplayName={#AppName}
 UninstallFilesDir={app}\SOTTR-VR\uninstall
 VersionInfoVersion={#AppVersion}
@@ -98,6 +104,14 @@ const
 
   UninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{6E4C2B1F-8D3A-4F5E-9B27-4C1A9E6D3F80}_is1';
 
+  { OptiScaler: the release tested with the mod (2026-10-31: FSR 3.1 behind the game's DLSS, frame warp and per-eye
+    upscaling working). A new release is only taken after testing it: the hash pins this one. }
+  OptiVersion = '0.9.4';
+  OptiUrl = 'https://github.com/optiscaler/OptiScaler/releases/download/v0.9.4/Optiscaler_0.9.4-final.20260718._MM.7z';
+  OptiSha256 = '575cb4df866116093df75af607e37fd70e10f5163e0f23fd5c804142e80ef0ad';
+  OptiArchive = 'optiscaler.7z';
+  OptiMarker = 'SOTTR-VR\optiscaler.installed';   { Setup installed it: removed again on uninstall }
+
 var
   FoveationPage: TWizardPage;
   FovNone, FovFixed, FovEye: TNewRadioButton;
@@ -109,6 +123,13 @@ var
   Dlss5MS, Dlss5LS: Cardinal;      { its version }
   CachedGameDir: String;
   KeepSettings: Boolean;
+  OptiPage: TWizardPage;
+  OptiCheck: TNewCheckBox;
+  OptiStatus: TNewStaticText;
+  DownloadPage: TDownloadWizardPage;
+  GpuNames: String;          { the display adapters Windows has drivers for }
+  HasNvidiaRtx: Boolean;
+  OptiShown: Boolean;
 
 { ---- Already installed: update or uninstall ---- }
 
@@ -345,6 +366,194 @@ begin
   Result := Format('%d.%d.%d', [Dlss5MS shr 16, Dlss5MS and $FFFF, Dlss5LS shr 16]);
 end;
 
+{ A dxgi.dll that isn't ours (another mod: ReShade, OptiScaler, Special K, ...) is moved aside, and put back
+  when the mod is uninstalled. }
+{ Ours: the file contains a name only our builds have -- the mod's settings file name vrmod_settings.ini (in every build; its
+  Cheeky gaze export names are shared with other mods), or
+  the export CheekyBootstrap_Status in Cheeky's loader (stored as plain text; the folder name in it is UTF-16). }
+function IsOurs(const Path, Marker: String): Boolean;
+var
+  S: AnsiString;
+begin
+  Result := LoadStringFromFile(Path, S) and (Pos(AnsiString(Marker), S) > 0);
+end;
+
+procedure MoveAside(const Name, OurProduct: String);
+var
+  Path: String;
+begin
+  Path := ExpandConstant('{app}\') + Name;
+  if FileExists(Path) and not IsOurs(Path, OurProduct) and not FileExists(Path + BackupSuffix) then begin
+    if RenameFile(Path, Path + BackupSuffix) then
+      Log('Moved another ' + Name + ' aside: ' + Path + BackupSuffix)
+    else
+      SuppressibleMsgBox('Could not move the existing ' + Name + ' aside. Close the game and any mod tools, then run Setup again.', mbError, MB_OK, IDOK);
+  end;
+end;
+
+procedure RestoreAside(const Name: String);
+var
+  Path: String;
+begin
+  Path := ExpandConstant('{app}\') + Name;
+  if FileExists(Path + BackupSuffix) and not FileExists(Path) then RenameFile(Path + BackupSuffix, Path);
+end;
+
+{ ---- OptiScaler (AMD and Intel graphics cards) ---- }
+
+{ The display adapters Windows has drivers for (the display class in the registry). }
+procedure DetectGpus;
+var
+  Keys: TArrayOfString;
+  I: Integer;
+  Base, Desc: String;
+begin
+  Base := 'SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}';
+  if not RegGetSubkeyNames(HKLM, Base, Keys) then Exit;
+  for I := 0 to GetArrayLength(Keys) - 1 do
+    if RegQueryStringValue(HKLM, Base + '\' + Keys[I], 'DriverDesc', Desc) then begin
+      if GpuNames <> '' then GpuNames := GpuNames + ', ';
+      GpuNames := GpuNames + Desc;
+      if (Pos('NVIDIA', Uppercase(Desc)) > 0) and (Pos('RTX', Uppercase(Desc)) > 0) then HasNvidiaRtx := True;
+    end;
+  Log('Graphics: ' + GpuNames);
+end;
+
+{ The page is offered without an NVIDIA RTX card, or when asked for on the command line (/OPTISCALER=0|1). }
+function OptiOffered: Boolean;
+begin
+  Result := (not HasNvidiaRtx) or (ExpandConstant('{param:OPTISCALER|}') <> '');
+end;
+
+function OptiOn: Boolean;
+var
+  P: String;
+begin
+  P := ExpandConstant('{param:OPTISCALER|}');
+  if P <> '' then Result := P = '1'
+  else Result := OptiOffered and OptiCheck.Checked;
+end;
+
+{ An OptiScaler the player installed (any of the names it loads as, not one Setup installed). }
+function OwnOptiScaler: String;
+var
+  Names: TArrayOfString;
+  I: Integer;
+  Dir: String;
+begin
+  Result := '';
+  Dir := ExpandConstant('{app}\');
+  if FileExists(Dir + OptiMarker) then Exit;
+  Names := ['dbghelp.dll', 'winmm.dll', 'version.dll', 'd3d12.dll', 'wininet.dll', 'winhttp.dll'];
+  for I := 0 to GetArrayLength(Names) - 1 do
+    if FileExists(Dir + Names[I]) and IsOurs(Dir + Names[I], 'OptiScaler') then begin
+      Result := Names[I];
+      Exit;
+    end;
+end;
+
+{ Setup's own install of this OptiScaler release is already there (an update): nothing to download. }
+function OptiCurrent: Boolean;
+var
+  S: AnsiString;
+  V: String;
+begin
+  V := OptiVersion;
+  Result := LoadStringFromFile(ExpandConstant('{app}\') + OptiMarker, S) and (Pos(AnsiString(V), S) > 0)
+    and FileExists(ExpandConstant('{app}\dbghelp.dll'));
+end;
+
+procedure InitOptiChoice;
+var
+  Own: String;
+begin
+  if OptiShown then Exit;
+  OptiShown := True;
+  Own := OwnOptiScaler;
+  OptiCheck.Checked := (Own = '') and ((not HasNvidiaRtx) or FileExists(ExpandConstant('{app}\') + OptiMarker));
+  if Own <> '' then begin
+    OptiCheck.Enabled := False;
+    OptiStatus.Caption := 'OptiScaler is already in the game folder (' + Own + '): Setup leaves it as it is. Set its ' +
+      'Dx12Upscaler to fsr31 in OptiScaler.ini, and turn DLSS on in the game''s display settings.';
+  end else if OptiCurrent then
+    OptiStatus.Caption := 'OptiScaler ' + OptiVersion + ' is installed already: nothing to download.'
+  else
+    OptiStatus.Caption := 'Setup downloads OptiScaler ' + OptiVersion + ' (55 MB) from github.com/optiscaler/OptiScaler ' +
+      'when you click Install.';
+  OptiStatus.AdjustHeight;
+end;
+
+{ Copies a folder's files (no subfolders) -- OptiScaler's licences. }
+procedure CopyFolderFiles(const Src, Dest: String);
+var
+  F: TFindRec;
+begin
+  ForceDirectories(Dest);
+  if FindFirst(Src + '*', F) then
+    try
+      repeat
+        if F.Attributes and FILE_ATTRIBUTE_DIRECTORY = 0 then FileCopy(Src + F.Name, Dest + F.Name, False);
+      until not FindNext(F);
+    finally
+      FindClose(F);
+    end;
+end;
+
+procedure RemoveOptiScaler;
+var
+  Dir: String;
+begin
+  Dir := ExpandConstant('{app}\');
+  if not FileExists(Dir + OptiMarker) then Exit;
+  DeleteFile(Dir + 'dbghelp.dll');
+  DeleteFile(Dir + 'OptiScaler.ini');
+  DeleteFile(Dir + 'OptiScaler.log');
+  DeleteFile(Dir + 'amd_fidelityfx_dx12.dll');
+  DeleteFile(Dir + 'amd_fidelityfx_upscaler_dx12.dll');
+  DeleteFile(Dir + 'fakenvapi.dll');
+  DeleteFile(Dir + 'fakenvapi.ini');
+  DelTree(Dir + 'SOTTR-VR\OptiScaler-licenses', True, True, True);
+  DeleteFile(Dir + OptiMarker);
+  RestoreAside('dbghelp.dll');
+  RestoreAside('OptiScaler.ini');
+  Log('Removed the OptiScaler Setup had installed');
+end;
+
+{ After the mod's files: the downloaded release unpacked, the files the mod needs copied in (OptiScaler as dbghelp.dll),
+  and FSR 3.1 chosen with frame generation off -- the settings tested with the mod. }
+procedure InstallOptiScaler;
+var
+  Dir, Src, Ini: String;
+  Names: TArrayOfString;
+  I: Integer;
+  Ok: Boolean;
+begin
+  Dir := ExpandConstant('{app}\');
+  if (OwnOptiScaler <> '') or OptiCurrent then Exit;
+  Src := ExpandConstant('{tmp}\opti\');
+  try
+    ExtractArchive(ExpandConstant('{tmp}\') + OptiArchive, Src, '', True, nil);
+  except
+    SuppressibleMsgBox('Could not unpack OptiScaler (' + GetExceptionMessage + '). The mod is installed without it.', mbError, MB_OK, IDOK);
+    Exit;
+  end;
+  MoveAside('dbghelp.dll', 'OptiScaler');
+  MoveAside('OptiScaler.ini', ':never-ours:');
+  Ok := FileCopy(Src + 'OptiScaler.dll', Dir + 'dbghelp.dll', False);
+  Names := ['OptiScaler.ini', 'amd_fidelityfx_dx12.dll', 'amd_fidelityfx_upscaler_dx12.dll', 'fakenvapi.dll', 'fakenvapi.ini'];
+  for I := 0 to GetArrayLength(Names) - 1 do
+    Ok := FileCopy(Src + Names[I], Dir + Names[I], False) and Ok;
+  CopyFolderFiles(Src + 'Licenses\', Dir + 'SOTTR-VR\OptiScaler-licenses\');
+  Ini := Dir + 'OptiScaler.ini';
+  SetIniString('Upscalers', 'Dx12Upscaler', 'fsr31', Ini);
+  SetIniString('FrameGen', 'Enabled', 'false', Ini);
+  SaveStringToFile(Dir + OptiMarker, 'OptiScaler ' + OptiVersion + ' installed by Setup from ' + OptiUrl + #13#10 +
+    'dbghelp.dll (OptiScaler.dll), OptiScaler.ini, amd_fidelityfx_dx12.dll, amd_fidelityfx_upscaler_dx12.dll, fakenvapi.dll, ' +
+    'fakenvapi.ini, SOTTR-VR\OptiScaler-licenses' + #13#10, False);
+  if Ok then Log('Installed OptiScaler ' + OptiVersion + ' (FSR 3.1) as dbghelp.dll')
+  else SuppressibleMsgBox('Some of OptiScaler''s files could not be copied into the game folder. Close the game and run Setup again.', mbError, MB_OK, IDOK);
+end;
+
 { ---- Wizard ---- }
 
 function AddText(const Caption: String; Left, Top: Integer): TNewStaticText;
@@ -391,7 +600,38 @@ var
   Indent: Integer;
   T: TNewStaticText;
 begin
-  FoveationPage := CreateCustomPage(wpSelectDir, 'Foveated rendering',
+  DetectGpus;
+  DownloadPage := CreateDownloadPage(SetupMessage(msgWizardPreparing), SetupMessage(msgPreparingDesc), nil);
+  DownloadPage.ShowBaseNameInsteadOfUrl := True;
+  OptiPage := CreateCustomPage(wpSelectDir, 'AMD and Intel graphics cards',
+    'No NVIDIA RTX graphics card was found: ' + GpuNames + '.');
+  OptiCheck := TNewCheckBox.Create(OptiPage);
+  OptiCheck.Parent := OptiPage.Surface;
+  OptiCheck.Width := OptiPage.SurfaceWidth;
+  OptiCheck.Height := ScaleY(17);
+  OptiCheck.Caption := 'Use FSR through OptiScaler (experimental)';
+  OptiCheck.Font.Style := [fsBold];
+  T := TNewStaticText.Create(OptiPage);
+  T.Parent := OptiPage.Surface;
+  T.AutoSize := False;
+  T.WordWrap := True;
+  T.Left := ScaleX(18);
+  T.Top := OptiCheck.Height + ScaleY(4);
+  T.Width := OptiPage.SurfaceWidth - T.Left;
+  T.Caption := 'The mod works through the game''s DLSS, which needs an NVIDIA RTX card. OptiScaler, a free, open-source ' +
+    'mod (GPL-3.0), lets the game use its DLSS settings on AMD and Intel cards and runs AMD''s FSR 3.1 in its place. ' +
+    'It has been tested with the mod on an NVIDIA card; on AMD and Intel cards it is untested so far -- reports are ' +
+    'welcome. After installing, turn DLSS on in the game''s display settings. Foveated rendering needs NVIDIA''s ' +
+    'DLSS, so it is off with OptiScaler.';
+  T.AdjustHeight;
+  OptiStatus := TNewStaticText.Create(OptiPage);
+  OptiStatus.Parent := OptiPage.Surface;
+  OptiStatus.AutoSize := False;
+  OptiStatus.WordWrap := True;
+  OptiStatus.Left := T.Left;
+  OptiStatus.Top := T.Top + T.Height + ScaleY(8);
+  OptiStatus.Width := T.Width;
+  FoveationPage := CreateCustomPage(OptiPage.ID, 'Foveated rendering',
     'How much of your view is drawn at full quality. You can change it later in the mod''s overlay (Rendering page).');
   Indent := ScaleX(18);
   FovNone := AddRadio('No foveated rendering', 0);
@@ -462,11 +702,46 @@ end;
 procedure CurPageChanged(CurPageID: Integer);
 begin
   if CurPageID = FoveationPage.ID then InitFoveationChoice;
+  if CurPageID = OptiPage.ID then InitOptiChoice;
+end;
+
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := False;
+  if PageID = OptiPage.ID then Result := not OptiOffered;
+  if PageID = FoveationPage.ID then Result := OptiOn;   { foveated rendering needs NVIDIA's DLSS }
+end;
+
+{ Install: OptiScaler downloaded first (into Setup's temporary folder; checked against the tested release's SHA-256). }
+function DownloadOptiScaler: Boolean;
+begin
+  Result := True;
+  if not OptiOn or (OwnOptiScaler <> '') or OptiCurrent then Exit;
+  DownloadPage.Clear;
+  DownloadPage.Add(OptiUrl, OptiArchive, OptiSha256);
+  DownloadPage.Show;
+  try
+    try
+      DownloadPage.Download;
+    except
+      if not DownloadPage.AbortedByUser then
+        SuppressibleMsgBox('Could not download OptiScaler: ' + GetExceptionMessage + #13#10#13#10 +
+          'Check your internet connection, or go back and untick OptiScaler to install the mod without it.', mbError, MB_OK, IDOK);
+      Result := False;
+    end;
+  finally
+    DownloadPage.Hide;
+  end;
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
+  if CurPageID = wpReady then begin
+    InitOptiChoice;   { a silent install never shows the page }
+    Result := DownloadOptiScaler;
+    Exit;
+  end;
   if CurPageID = wpSelectDir then
     if not IsGameDir(WizardDirValue) then begin
       SuppressibleMsgBox('SOTTR.exe isn''t in this folder:' + #13#10 + WizardDirValue + #13#10#13#10 +
@@ -477,19 +752,20 @@ end;
 
 function FoveationMode(Param: String): String;
 begin
-  if FovEye.Checked then Result := 'eye'
+  if OptiOn then Result := 'off'
+  else if FovEye.Checked then Result := 'eye'
   else if FovFixed.Checked then Result := 'fixed'
   else Result := 'off';
 end;
 
 function FoveationOn: Boolean;
 begin
-  Result := not FovNone.Checked;
+  Result := not FovNone.Checked and not OptiOn;
 end;
 
 function Dlss5On: Boolean;
 begin
-  Result := FovEye.Checked and (Dlss5Source <> '') and Dlss5Check.Checked;
+  Result := FovEye.Checked and (Dlss5Source <> '') and Dlss5Check.Checked and not OptiOn;
 end;
 
 function Dlss5Value(Param: String): String;
@@ -524,6 +800,7 @@ var
 begin
   if CurStep <> ssPostInstall then Exit;
   Dir := ExpandConstant('{app}\');
+  if OptiOn then InstallOptiScaler else RemoveOptiScaler;
   if not Dlss5On then
     RemoveCopiedDlss5
   else if CompareText(Dlss5Source, Dir + 'nvngx_dlssnr.dll') <> 0 then begin
@@ -534,39 +811,6 @@ begin
       SuppressibleMsgBox('Could not copy nvngx_dlssnr.dll from ' + Dlss5Source + '. DLSS 5 stays off until it is in the game folder.',
         mbError, MB_OK, IDOK);
   end;
-end;
-
-{ A dxgi.dll that isn't ours (another mod: ReShade, OptiScaler, Special K, ...) is moved aside, and put back
-  when the mod is uninstalled. }
-{ Ours: the file contains a name only our builds have -- the mod's settings file name vrmod_settings.ini (in every build; its
-  Cheeky gaze export names are shared with other mods), or
-  the export CheekyBootstrap_Status in Cheeky's loader (stored as plain text; the folder name in it is UTF-16). }
-function IsOurs(const Path, Marker: String): Boolean;
-var
-  S: AnsiString;
-begin
-  Result := LoadStringFromFile(Path, S) and (Pos(AnsiString(Marker), S) > 0);
-end;
-
-procedure MoveAside(const Name, OurProduct: String);
-var
-  Path: String;
-begin
-  Path := ExpandConstant('{app}\') + Name;
-  if FileExists(Path) and not IsOurs(Path, OurProduct) and not FileExists(Path + BackupSuffix) then begin
-    if RenameFile(Path, Path + BackupSuffix) then
-      Log('Moved another ' + Name + ' aside: ' + Path + BackupSuffix)
-    else
-      SuppressibleMsgBox('Could not move the existing ' + Name + ' aside. Close the game and any mod tools, then run Setup again.', mbError, MB_OK, IDOK);
-  end;
-end;
-
-procedure RestoreAside(const Name: String);
-var
-  Path: String;
-begin
-  Path := ExpandConstant('{app}\') + Name;
-  if FileExists(Path + BackupSuffix) and not FileExists(Path) then RenameFile(Path + BackupSuffix, Path);
 end;
 
 { The mod loads CheekyFoveatedDLSS itself (1.0.0 and later); an earlier install's Cheeky loader (version.dll) is removed,
@@ -631,7 +875,10 @@ end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
-  if CurUninstallStep = usUninstall then RemoveCopiedDlss5;   { before the SOTTR-VR folder is removed }
+  if CurUninstallStep = usUninstall then begin   { before the SOTTR-VR folder is removed }
+    RemoveCopiedDlss5;
+    RemoveOptiScaler;
+  end;
   if CurUninstallStep = usPostUninstall then begin
     if not KeepSettings then begin
       DeleteFile(ExpandConstant('{app}\vrmod_settings.ini'));

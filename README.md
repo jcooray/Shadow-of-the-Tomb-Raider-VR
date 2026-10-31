@@ -32,7 +32,11 @@ It's free and open source. If you enjoy it, you can [support its development](#s
   can't find and says so in its log.
 - **A PC VR headset and an OpenXR runtime.** I use a Pimax Dream Air with SteamVR. Other headsets and runtimes
   (Quest through Link, Air Link or Virtual Desktop; Windows Mixed Reality; Index; Vive) should work but are untested.
-- **An NVIDIA RTX graphics card** for DLSS. It hasn't been tried on AMD or Intel GPUs.
+- **An NVIDIA RTX graphics card** for DLSS -- or, **experimentally, an AMD or Intel card**: the mod works through the
+  game's DLSS, and on a PC without an RTX card Setup offers to install
+  [OptiScaler](https://github.com/optiscaler/OptiScaler), which runs AMD's FSR 3.1 behind the game's DLSS. Tested with
+  the mod on an NVIDIA card; reports from AMD and Intel players are very welcome. Turn DLSS on in the game's display
+  settings afterwards. Foveated rendering needs NVIDIA's DLSS and is off with OptiScaler.
 - **A gamepad, or your VR motion controllers** working as one (Index and Quest Touch controllers; see Controls).
   There is no motion-controller aiming yet.
 

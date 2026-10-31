@@ -5,6 +5,8 @@
 #include "settings.h"
 
 #include <dxgi1_2.h>
+#include <winternl.h>
+#include <d3dkmthk.h>
 
 #include <algorithm>
 #include <cmath>
@@ -50,6 +52,46 @@ double PerMpixMs(Foveation fov) {
     return kPerMpixMs + kFoveationMs[static_cast<int>(fov)] / kMeasuredMpix;
 }
 
+// The adapter's name and video memory as Windows has them (the graphics kernel's adapter info, from the driver's own
+// registry entry), not DXGI's: OptiScaler -- the route for AMD and Intel cards, Setup's option -- makes DXGI describe
+// the card as an "NVIDIA GeForce RTX 4090" so the game offers DLSS, and the starting resolution would be chosen for a
+// 4090. Through gdi32's D3DKMT functions, looked up at run time.
+bool RealAdapter(LUID luid, std::string* name, uint64_t* vramMB) {
+    const HMODULE gdi = GetModuleHandleW(L"gdi32.dll") ? GetModuleHandleW(L"gdi32.dll") : LoadLibraryW(L"gdi32.dll");
+    if (!gdi) return false;
+    using Open_t = NTSTATUS(APIENTRY*)(D3DKMT_OPENADAPTERFROMLUID*);
+    using Query_t = NTSTATUS(APIENTRY*)(const D3DKMT_QUERYADAPTERINFO*);
+    using Close_t = NTSTATUS(APIENTRY*)(const D3DKMT_CLOSEADAPTER*);
+    const auto open = reinterpret_cast<Open_t>(GetProcAddress(gdi, "D3DKMTOpenAdapterFromLuid"));
+    const auto query = reinterpret_cast<Query_t>(GetProcAddress(gdi, "D3DKMTQueryAdapterInfo"));
+    const auto close = reinterpret_cast<Close_t>(GetProcAddress(gdi, "D3DKMTCloseAdapter"));
+    if (!open || !query || !close) return false;
+    D3DKMT_OPENADAPTERFROMLUID oa{};
+    oa.AdapterLuid = luid;
+    if (open(&oa) != 0) return false;
+    D3DKMT_ADAPTERREGISTRYINFO reg{};
+    D3DKMT_QUERYADAPTERINFO q{};
+    q.hAdapter = oa.hAdapter;
+    q.Type = KMTQAITYPE_ADAPTERREGISTRYINFO;
+    q.pPrivateDriverData = &reg;
+    q.PrivateDriverDataSize = sizeof(reg);
+    const bool ok = query(&q) == 0 && reg.AdapterString[0];
+    if (ok) {
+        char n[MAX_PATH] = {};
+        WideCharToMultiByte(CP_UTF8, 0, reg.AdapterString, -1, n, sizeof(n) - 1, nullptr, nullptr);
+        *name = n;
+        D3DKMT_SEGMENTSIZEINFO seg{};
+        q.Type = KMTQAITYPE_GETSEGMENTSIZE;
+        q.pPrivateDriverData = &seg;
+        q.PrivateDriverDataSize = sizeof(seg);
+        if (query(&q) == 0 && seg.DedicatedVideoMemorySize) *vramMB = seg.DedicatedVideoMemorySize >> 20;
+    }
+    D3DKMT_CLOSEADAPTER ca{};
+    ca.hAdapter = oa.hAdapter;
+    close(&ca);
+    return ok;
+}
+
 }  // namespace
 
 void LogSystemInfo() {
@@ -70,11 +112,15 @@ void LogSystemInfo() {
                 if (!desc || (d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) continue;
                 char name[128] = {};
                 WideCharToMultiByte(CP_UTF8, 0, d.Description, -1, name, sizeof(name) - 1, nullptr, nullptr);
-                std::string line = std::string("SYSTEM: graphics card '") + name + "', " + std::to_string(d.DedicatedVideoMemory >> 20) + " MB";
+                std::string real = name;
+                uint64_t vram = d.DedicatedVideoMemory >> 20;
+                RealAdapter(d.AdapterLuid, &real, &vram);   // Windows' own name (DXGI's may be OptiScaler's)
+                std::string line = std::string("SYSTEM: graphics card '") + real + "', " + std::to_string(vram) + " MB";
+                if (real != name) line += std::string(" (DXGI reports '") + name + "')";
                 if (ver) {
                     const unsigned a = HIWORD(umd.HighPart), b = LOWORD(umd.HighPart), c = HIWORD(umd.LowPart), e = LOWORD(umd.LowPart);
                     line += ", driver " + std::to_string(a) + "." + std::to_string(b) + "." + std::to_string(c) + "." + std::to_string(e);
-                    if (d.VendorId == 0x10DE) {   // NVIDIA's own numbering: the last five digits, e.g. 32.0.15.6094 -> 560.94
+                    if (real.find("NVIDIA") != std::string::npos) {   // NVIDIA's own numbering: the last five digits, e.g. 32.0.15.6094 -> 560.94
                         const unsigned n = (c % 10) * 10000 + e;
                         line += " (NVIDIA " + std::to_string(n / 100) + "." + (n % 100 < 10 ? "0" : "") + std::to_string(n % 100) + ")";
                     }
@@ -126,6 +172,18 @@ GpuInfo GpuInfoForLuid(LUID luid) {
         factory->Release();
     }
     FreeLibrary(dxgi);
+    {
+        std::string real;
+        uint64_t vram = g.vramMB;
+        if (RealAdapter(luid, &real, &vram)) {
+            if (!g.name.empty() && real != g.name) {
+                modlog::Line("GPU: DXGI reports '" + g.name + "', Windows '" + real + "' -- the starting resolution is chosen for Windows' "
+                             "(another mod, e.g. OptiScaler, changes what DXGI reports)");
+            }
+            g.name = real;
+            g.vramMB = vram;
+        }
+    }
     if (g.name.empty()) return g;
     {
         std::lock_guard<std::mutex> lock(g_nameMutex);

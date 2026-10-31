@@ -234,6 +234,13 @@ bool PickSwapchainFormat(int64_t* outFormat) {
         if (g_backbufferFormat == DXGI_FORMAT_B8G8R8A8_UNORM) srgbTwin = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
         if (g_backbufferFormat == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) srgbTwin = DXGI_FORMAT_R8G8B8A8_UNORM;
         if (g_backbufferFormat == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB) srgbTwin = DXGI_FORMAT_B8G8R8A8_UNORM;
+        // The game's 8-bit backbuffer holds gamma-encoded (sRGB) colour in a UNORM format. Declared as UNORM, a runtime
+        // that follows the spec treats it as linear and encodes it again -- washed-out, too bright colours under Virtual
+        // Desktop's VDXR (Dante727, 2026-10-31; SteamVR shows UNORM as it is). The sRGB view of the same bytes first.
+        const bool unorm8 = g_backbufferFormat == DXGI_FORMAT_R8G8B8A8_UNORM || g_backbufferFormat == DXGI_FORMAT_B8G8R8A8_UNORM;
+        for (auto f : formats) {
+            if (unorm8 && f == srgbTwin) { *outFormat = f; return true; }
+        }
         for (auto f : formats) {
             if (f == g_backbufferFormat) { *outFormat = f; return true; }
         }

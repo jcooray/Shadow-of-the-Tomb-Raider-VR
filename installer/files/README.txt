@@ -9,7 +9,9 @@ What you need
 -------------
 - Shadow of the Tomb Raider on PC (made and tested with the Steam version, DirectX 12).
 - A PC VR headset with an OpenXR runtime (made and tested with SteamVR; others should work).
-- An NVIDIA RTX graphics card for DLSS. Other GPUs should run without DLSS but haven't been tested yet.
+- An NVIDIA RTX graphics card for DLSS -- or, experimentally, an AMD or Intel card: on a PC without an RTX card Setup
+  offers to install OptiScaler (github.com/optiscaler/OptiScaler), which runs AMD's FSR 3.1 behind the game's DLSS.
+  Turn DLSS on in the game's display settings afterwards. Foveated rendering needs NVIDIA's DLSS and is off with it.
 - A gamepad, or your VR motion controllers working as one (Index and Quest Touch controllers). Most of the mod is
   driven from the controller and an overlay in the headset.
 

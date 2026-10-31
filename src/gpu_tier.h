@@ -7,13 +7,14 @@
 namespace vrmod {
 
 struct GpuInfo {
-    std::string name;          // DXGI's adapter description, e.g. "NVIDIA GeForce RTX 4070"
+    std::string name;          // Windows' name for the adapter, e.g. "NVIDIA GeForce RTX 4070" (not DXGI's, which OptiScaler changes)
     uint64_t vramMB = 0;
     float relative = 0.0f;     // rough speed at high resolutions against the development RTX 5090 (1.0)
     bool known = false;        // relative is from the table, not the fallback guess
 };
 
-// The adapter with this LUID (OpenXR's graphics requirements name it), through the system DXGI -- no device is created.
+// The adapter with this LUID (OpenXR's graphics requirements name it): its name and video memory from Windows' graphics
+// kernel (the system DXGI only as a fallback) -- no device is created.
 // Also remembered for DetectedGpuName.
 GpuInfo GpuInfoForLuid(LUID luid);
 
