@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "key_bindings.h"
 #include "logger.h"
 
 namespace vrmod {
@@ -271,6 +272,12 @@ int SettingsSaveChanged() {
     }
     if (changed.empty()) return 0;
     return SettingsWriteKeys(changed) ? static_cast<int>(changed.size()) : 0;
+}
+
+std::string SettingString(const char* key) {
+    const auto kv = ReadFile();
+    const auto it = kv.find(key);
+    return it == kv.end() ? std::string() : Trim(it->second);
 }
 
 bool SettingsWriteKeys(const std::vector<std::pair<std::string, std::string>>& keys) {
@@ -717,6 +724,7 @@ void SaveSettings(const Settings& s) {
     LoadLive();
     std::vector<std::pair<std::string, std::string>> live;
     for (int i = 0; i < kLiveCount; ++i) live.emplace_back(kLive[i].key, FormatLive(i));
+    for (const auto& k : KeyBindingsForSave()) live.push_back(k);   // [keys] (key_bindings.cpp)
     SettingsWriteKeys(live);
     modlog::Line("Settings: wrote vrmod_settings.ini.");
 }

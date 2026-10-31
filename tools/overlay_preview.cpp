@@ -12,6 +12,7 @@
 #include "../src/bone_scan.h"
 #include "../src/camera_interceptor.h"
 #include "../src/cinematic_watch.h"
+#include "../src/desktop_spoof.h"
 #include "../src/dlss_probe.h"
 #include "../src/eye_gaze.h"
 #include "../src/game_addresses.h"
@@ -74,6 +75,9 @@ void UiProbeHudSet(bool on, float s, float o) { g_hudOn = on; g_hudScale = s; g_
 bool HudLayerEnabled() { return g_hudLayer; }
 void HudLayerSetEnabled(bool on) { g_hudLayer = on; }
 void EventMarkNow(const char*) {}
+bool DesktopSpoofFallback(int* fromPct, int* toPct) { *fromPct = *toPct = 0; return false; }
+int64_t DlssEvaluateCount() { return 100; }
+bool GameSwapChainHdr() { return false; }
 }  // namespace vrmod
 
 namespace {
@@ -122,6 +126,7 @@ int main(int argc, char** argv) {
         printf("first run: %d\n", vrmod::SettingsFirstRun() ? 1 : 0);
         return 0;
     }
+    const bool controls = argc > 2 && std::string(argv[2]) == "controls";   // only the Controls page, and a key being chosen
     vrmod::OverlayXrInfo xr;
     xr.runtime = "SteamVR/OpenXR 2.18.4";
     xr.system = "Pimax Dream Air";
@@ -131,6 +136,25 @@ int main(int argc, char** argv) {
     xr.eyeH = 4592;
     vrmod::VrOverlaySetXrInfo(xr);
     Tick(0, 3);
+    if (controls) {
+        auto shot = [&](const char* name) {
+            Sleep(600);
+            Tick(0, 2);
+            int w = 0, h = 0;
+            if (const uint8_t* img = vrmod::VrOverlayTakeImage(&w, &h)) WriteBmp(out + "\\" + name, img, w, h);
+            else printf("%s: no new image\n", name);
+        };
+        Tick(vrmod::kPadGuide | XINPUT_GAMEPAD_START); Tick(0, 3);
+        for (int i = 0; i < 4; ++i) { Tick(XINPUT_GAMEPAD_RIGHT_SHOULDER); Tick(0, 3); Sleep(100); }
+        shot("controls.bmp");
+        Tick(XINPUT_GAMEPAD_DPAD_DOWN); Tick(0, 3);   // to "Key: Recentre the view" (the Info lines aren't selectable)
+        Tick(XINPUT_GAMEPAD_A); Tick(0, 3);
+        shot("controls_choosing.bmp");
+        Tick(XINPUT_GAMEPAD_B); Tick(0, 3);
+        shot("controls_cancelled.bmp");
+        printf("done\n");
+        return 0;
+    }
     vrmod::VrOverlayNotify("Restart the game once to render at 6368 x 4592 (150 % render resolution). It runs at 5120 x 2880 now.", 5);
     Tick(0, 2);
     {

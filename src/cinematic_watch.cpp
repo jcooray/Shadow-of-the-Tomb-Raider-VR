@@ -17,6 +17,7 @@
 #include "present_hook.h"
 #include "camera_interceptor.h"
 #include "head_tracking.h"
+#include "key_bindings.h"
 #include "settings.h"
 #include "aer.h"
 #include "openxr_integration.h"
@@ -360,7 +361,7 @@ void IntroPoll() {
     }
 }
 
-// J (no modifiers): stamps MARK in the log, to line up events and camera modes with what the player did.
+// The mark key (J by default): stamps MARK in the log, to line up events and camera modes with what the player did.
 void EventMarkNow(const char* how) {
     static int n = 0;
     modlog::Line("MARK " + std::to_string(++n) + " (" + how + ")");
@@ -369,10 +370,9 @@ void EventMarkNow(const char* how) {
 void EventMarkPollHotkey() {
     IntroPoll();
     static bool was = false;
-    const bool down = (GetAsyncKeyState('J') & 0x8000) != 0;
-    const bool mods = (GetAsyncKeyState(VK_CONTROL) & 0x8000) || (GetAsyncKeyState(VK_MENU) & 0x8000) || (GetAsyncKeyState(VK_SHIFT) & 0x8000);
-    if (down && !was && !mods) {
-        EventMarkNow("J");
+    const bool down = KeyActionDown(KeyAction::Mark);   // J unless the player chose another (key_bindings.cpp)
+    if (down && !was) {
+        EventMarkNow("key");
         PlayCue(Cue::On);
     }
     was = down;

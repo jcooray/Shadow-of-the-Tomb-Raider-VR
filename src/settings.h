@@ -199,6 +199,8 @@ void SetHeadAimForSave(bool on);
 float SettingGet(const char* key);
 bool SettingSet(const char* key, float value);
 float SettingDefault(const char* key);
+// Any "section.key" as written in vrmod_settings.ini (spaces trimmed), "" if missing -- for text values such as [keys].
+std::string SettingString(const char* key);
 // Every live value, and putting them back (the overlay's undo): keys whose value differs are set again (marked to save).
 std::vector<float> SettingsSnapshot();
 void SettingsRestore(const std::vector<float>& snapshot);

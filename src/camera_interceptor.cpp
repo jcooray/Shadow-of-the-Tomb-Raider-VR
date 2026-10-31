@@ -20,6 +20,7 @@
 #include "game_addresses.h"
 #include "logger.h"
 #include "head_tracking.h"
+#include "key_bindings.h"
 #include "settings.h"
 #include "audio_cue.h"
 #include "stereo_scale.h"
@@ -702,15 +703,15 @@ void ToggleHeadAim(const char* how) {
 
 // Present thread: Ctrl+Alt+A toggles the A2 yaw injection; A1's layout once and the counts every 30 s go to the log.
 void PollAimSync() {
-    // K alone as well (no modifiers): with a gamepad in hand (aim held on the trigger) a three-key chord is impractical,
-    // A is a movement key, and not every keyboard has Scroll Lock. K has no default binding in the game.
+    // The head aim key (key_bindings.cpp: K unless the player chose another) -- one key, as with a gamepad in hand (aim
+    // held on the trigger) a three-key chord is impractical. K has no default binding in the game.
     static bool aWas = false, scrollWas = false;
     const bool a = (VRMOD_DEV_KEY('A') & 0x8000) != 0;
-    const bool scroll = (GetAsyncKeyState('K') & 0x8000) != 0 && !(GetAsyncKeyState(VK_CONTROL) & 0x8000) && !(GetAsyncKeyState(VK_MENU) & 0x8000);
+    const bool scroll = KeyActionDown(KeyAction::HeadAim);
     const bool ca = (GetAsyncKeyState(VK_CONTROL) & 0x8000) && (GetAsyncKeyState(VK_MENU) & 0x8000);
     const bool scrollPressed = scroll && !scrollWas;
     scrollWas = scroll;
-    if (scrollPressed) ToggleHeadAim("K");
+    if (scrollPressed) ToggleHeadAim("key");
     const int want = (a && !aWas && ca) ? 1 : 0;
     if (want == 1 && !g_aimInjectRet) {
         modlog::Line("AIMINJECT: not available (the blend stack's call to the record copy wasn't where expected).");
@@ -2057,19 +2058,22 @@ void PollFirstPersonHotkeys() {
         }
     }
 
-    // Release build: plain Home only (first / third person); its Ctrl / Alt variants are development keys.
-    const bool homeDown = down(VK_HOME) && (VRMOD_DIAG || (!down(VK_CONTROL) && !down(VK_MENU)));
+    // The first / third person key (key_bindings.cpp: Home unless the player chose another); in a development build
+    // Ctrl / Alt + Home are development keys of their own.
+    const bool fpKey = KeyActionDown(KeyAction::FirstPerson);
+    const bool devHome = VRMOD_DIAG && !fpKey && down(VK_HOME) && (down(VK_CONTROL) || down(VK_MENU));
+    const bool homeDown = fpKey || devHome;
     if (homeDown && !homeWasDown) {
-        if (down(VK_CONTROL) && down(VK_MENU)) {
+        if (devHome && down(VK_CONTROL) && down(VK_MENU)) {
             HeadBoneToggle();   // Ctrl+Alt+Home: head-bone camera on/off (off = the distance/height/side offsets)
-        } else if (down(VK_CONTROL)) {
+        } else if (devHome && down(VK_CONTROL)) {
             // Ctrl+Home: reset the camera position to the saved startup default.
             g_firstPersonDistance.store(settings.distanceMetres);
             g_firstPersonHeight.store(settings.heightMetres);
             g_firstPersonSide.store(settings.sideMetres);
             modlog::Line("FirstPerson: RESET to the startup default distance=" + std::to_string(settings.distanceMetres)
                 + " m height=" + std::to_string(settings.heightMetres) + " m side=" + std::to_string(settings.sideMetres) + " m");
-        } else if (down(VK_MENU)) {
+        } else if (devHome && down(VK_MENU)) {
             // Alt+Home: cycle the run-push stopgap's maximum (see g_runPushMaxMetres above).
             static const float kSteps[] = { 0.0f, 0.3f, 0.5f, 0.6f, 0.7f, 0.9f };
             constexpr int kNumSteps = sizeof(kSteps) / sizeof(kSteps[0]);

@@ -27,6 +27,7 @@
 #include "head_drive.h"
 #include "head_tracking.h"
 #include "hud_layer.h"
+#include "key_bindings.h"
 #include "logger.h"
 #include "openvr_gaze.h"
 #include "overlay_image_view_toggle.h"
@@ -978,11 +979,25 @@ void BuildPages() {
         p.items.push_back(Info("This overlay", [] { return std::string("Menu + Guide (Xbox button)"); },
                                "Hold Guide, then press Menu. The game keeps running; it doesn't see the gamepad while the overlay is open."));
         p.items.push_back(Info("In the overlay", [] { return std::string("D-pad, A select, B close"); },
-                               "D-pad or left stick: choose (up/down) and change (left/right). LB / RB: pages. Y: back to the default."));
+                               "D-pad or left stick: choose (up/down) and change (left/right). LB / RB: pages. Y: back to the default. "
+                               "Keyboard: arrows, Enter, Backspace, Page Up / Down, Home."));
         p.items.push_back(Info("First / third person", [] { return std::string("LB + click right stick"); }));
         p.items.push_back(Info("Aim where you look", [] { return std::string("LB + hold right stick 0.6 s"); }));
         p.items.push_back(Info("Camera stabilisation", [] { return std::string("LB + click left stick"); }));
-        p.items.push_back(Info("Keyboard", [] { return std::string("Home first person, K head aim, J log mark"); }));
+        p.items.push_back(Info("Recentre the view", [] { return std::string("LB + RB together"); }));
+        // The keyboard shortcuts, each the player's own (key_bindings.cpp): A, then the new key.
+        for (int i = 0; i < static_cast<int>(KeyAction::Count); ++i) {
+            const KeyAction a = static_cast<KeyAction>(i);
+            Item key;
+            key.kind = Kind::Action;
+            key.label = std::string("Key: ") + KeyActionLabel(a);
+            key.help = "A, then press the new key -- with Ctrl, Alt or Shift if you like. Escape or B keeps the old one; Y puts the default back ("
+                       + KeyText(KeyDefault(a)) + ").";
+            key.value = [a] { return KeyCaptureActive() && KeyCaptureAction() == a ? std::string("press a key...") : KeyText(KeyBinding(a)); };
+            key.activate = [a] { KeyCaptureStart(a); };
+            key.reset = [a] { Message(KeyBindingSet(a, KeyDefault(a))); };
+            p.items.push_back(key);
+        }
         p.items.push_back(Toggle("View change tones", "Tones when the view switches between first and third person, and when menus pause head tracking.",
                                  "sound.view_cues"));
         g_pages.push_back(std::move(p));
@@ -1330,6 +1345,19 @@ void HandleInput(const PadState& pad, ULONGLONG now) {
         enterWas = enter;
         if (pressed(XINPUT_GAMEPAD_A) || enterPressed) DismissNotice(true);
         else if (pressed(XINPUT_GAMEPAD_B)) DismissNotice(false);
+        prev = b;
+        return;
+    }
+    if (KeyCaptureActive()) {   // choosing a key on the Controls page: the keyboard is the key's, B keeps the old one
+        KeyAction a = KeyAction::Overlay;
+        KeyCombo k;
+        bool cancelled = false;
+        if (pressed(XINPUT_GAMEPAD_B)) {
+            KeyCaptureCancel();
+            Message("key unchanged");
+        } else if (KeyCapturePoll(&a, &k, &cancelled)) {
+            Message(cancelled ? std::string("key unchanged") : KeyBindingSet(a, k));
+        }
         prev = b;
         return;
     }
@@ -1734,7 +1762,7 @@ void VrOverlayTick() {
     OverlayPadRead(&pad);
     // The keyboard inside the overlay (1.0.3), for a gamepad the mod can't read: arrows = d-pad, Enter = A, Backspace = B,
     // Page Up / Page Down = the pages (LB / RB), Home = Y (back to the default).
-    if (g_open) {
+    if (g_open && !KeyCaptureActive()) {
         const auto down = [](int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; };
         if (down(VK_UP)) pad.buttons |= XINPUT_GAMEPAD_DPAD_UP;
         if (down(VK_DOWN)) pad.buttons |= XINPUT_GAMEPAD_DPAD_DOWN;
@@ -1748,9 +1776,9 @@ void VrOverlayTick() {
     }
     static bool comboWas = false, keyWas = false;
     const bool combo = (pad.buttons & kPadGuide) && (pad.buttons & XINPUT_GAMEPAD_START);
-    // Keyboard fallback (Ctrl+Alt+O) for when the Guide button doesn't reach the game (e.g. Steam or the Xbox Game Bar
-    // take it): open with the keyboard, use the gamepad inside.
-    const bool key = (GetAsyncKeyState('O') & 0x8000) && (GetAsyncKeyState(VK_CONTROL) & 0x8000) && (GetAsyncKeyState(VK_MENU) & 0x8000);
+    // The overlay's key (Ctrl+Alt+O unless the player chose another), for when the Guide button doesn't reach the game
+    // (e.g. Steam or the Xbox Game Bar take it) or there's no gamepad the mod can read.
+    const bool key = KeyActionDown(KeyAction::Overlay);
     if ((combo && !comboWas) || (key && !keyWas)) {
         if (!g_open) {
             g_open = true;
@@ -1758,7 +1786,7 @@ void VrOverlayTick() {
             FixSelection();
             TakeSnapshot();
             g_lastSig.clear();
-            modlog::Line(std::string("OVERLAY: opened (") + (combo ? "Menu + Guide" : "Ctrl+Alt+O") + ")");
+            modlog::Line(std::string("OVERLAY: opened (") + (combo ? "Menu + Guide" : KeyText(KeyBinding(KeyAction::Overlay))) + ")");
         } else if (g_notice.active) {
             DismissNotice(false);
         } else if (!g_confirm.active) {
@@ -1773,6 +1801,28 @@ void VrOverlayTick() {
     // The game is blind to the pad while the overlay is open, and until every button pressed in it is released.
     if (g_releaseHold && pad.buttons == 0 && pad.lt < 30 && pad.rt < 30) g_releaseHold = false;
     OverlayPadBlockGame(g_open || g_releaseHold);
+    KeyBindingsSetOverlayOpen(g_open || g_releaseHold);   // the mod's own shortcuts are off while it's open too
+    if (!g_open && KeyCaptureActive()) KeyCaptureCancel();
+    {   // recentring: the recentre key (Ctrl+Alt+R unless the player chose another), or LB and RB pressed together --
+        // both going down within 0.25 s, so one held for the game and the other pressed later doesn't count
+        static bool recentreWas = false, lbWas = false, rbWas = false, bothWas = false;
+        static ULONGLONG lbAt = 0, rbAt = 0;
+        const bool recentre = KeyActionDown(KeyAction::Recentre);
+        const bool lb = (pad.buttons & XINPUT_GAMEPAD_LEFT_SHOULDER) != 0, rb = (pad.buttons & XINPUT_GAMEPAD_RIGHT_SHOULDER) != 0;
+        if (lb && !lbWas) lbAt = now;
+        if (rb && !rbWas) rbAt = now;
+        const bool both = lb && rb;
+        const bool together = both && !bothWas && !g_open && (lbAt > rbAt ? lbAt - rbAt : rbAt - lbAt) <= 250;
+        if ((recentre && !recentreWas) || together) {
+            HeadTrackingRequestRecenter();
+            if (Aer()) AerRequestRecenter(together ? "LB + RB" : "key");
+            VrOverlayNotify("View recentred", 2);
+        }
+        recentreWas = recentre;
+        lbWas = lb;
+        rbWas = rb;
+        bothWas = both;
+    }
     StartupMessages();
     ResolutionFallbackPrompt(now);
     GameSettingsPrompt(now);

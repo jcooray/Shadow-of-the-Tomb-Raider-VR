@@ -94,13 +94,22 @@ also sets the game's fullscreen resolution back to your desktop's.
 | LB + click the right stick | First person / third person |
 | LB + hold the right stick click | Aim where you look on / off |
 | LB + click the left stick | Camera stabilisation on / off |
+| LB + RB together | Recentre the view |
 
 | Keyboard | |
 |---|---|
 | Ctrl+Alt+O | Open or close the overlay (if the Guide button doesn't reach the game) |
+| Ctrl+Alt+R | Recentre the view |
 | Home | First person / third person |
 | K | Aim where you look on / off |
 | J | Mark this moment in the log, for bug reports |
+
+You can change these keys in the overlay's **Controls** page: select a line, press A, then press the new key (with Ctrl,
+Alt or Shift if you like). Or edit the `[keys]` section of `vrmod_settings.ini` with the game closed, e.g.
+`recentre=Ctrl+Shift+F5`. Key names: letters, digits, `F1`–`F24`, `Home`, `End`, `PageUp`, `PageDown`, `Insert`,
+`Delete`, `Up`, `Down`, `Left`, `Right`, `Space`, `Tab`, `Enter`, `Backspace`, `Pause`, `ScrollLock`, `Numpad0`–`Numpad9`,
+`NumpadPlus`, `NumpadMinus`, `NumpadMultiply`, `NumpadDivide`, `NumpadDecimal`, `Minus`, `Equals`, `LeftBracket`,
+`RightBracket`, `Semicolon`, `Quote`, `Comma`, `Period`, `Slash`, `Backslash`, `Backtick`; `none` switches a key off.
 
 In the overlay: D-pad up and down choose a line, left and right change it, **A** switches or runs it, **Y** puts it back
 to the default, **LB** / **RB** change page, and **B** closes it. On the keyboard: the arrow keys, **Enter** (A),

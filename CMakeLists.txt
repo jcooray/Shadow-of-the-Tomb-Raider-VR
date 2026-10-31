@@ -77,6 +77,7 @@ add_library(vrmod_dxgi_proxy SHARED
     src/head_tracking.cpp
     src/stall_watchdog.cpp
     src/exit_hook.cpp
+    src/key_bindings.cpp
     src/resolution_unlock.cpp
     src/desktop_spoof.cpp
     src/settings.cpp
@@ -161,7 +162,7 @@ endif()
 
 # Offline check of the release address patterns against the installed SOTTR.exe (tools/gameaddr_test.cpp).
 # Offline preview of the in-headset overlay's pages (tools/overlay_preview.cpp): the overlay with stand-ins for the game.
-add_executable(vrmod_overlay_preview tools/overlay_preview.cpp src/vr_overlay.cpp src/settings.cpp src/gpu_tier.cpp src/steamvr_settings.cpp)
+add_executable(vrmod_overlay_preview tools/overlay_preview.cpp src/vr_overlay.cpp src/settings.cpp src/key_bindings.cpp src/gpu_tier.cpp src/steamvr_settings.cpp)
 target_compile_definitions(vrmod_overlay_preview PRIVATE UNICODE _UNICODE VRMOD_DIAG=0)
 target_include_directories(vrmod_overlay_preview PRIVATE ${CMAKE_BINARY_DIR}/_deps/openxr_sdk-src/include)
 target_link_libraries(vrmod_overlay_preview PRIVATE user32 gdi32)
