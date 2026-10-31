@@ -103,7 +103,9 @@ also sets the game's fullscreen resolution back to your desktop's.
 | J | Mark this moment in the log, for bug reports |
 
 In the overlay: D-pad up and down choose a line, left and right change it, **A** switches or runs it, **Y** puts it back
-to the default, and **LB** / **RB** change page. The game keeps running and doesn't see the gamepad while it's open.
+to the default, **LB** / **RB** change page, and **B** closes it. On the keyboard: the arrow keys, **Enter** (A),
+**Backspace** (B), **Home** (Y) and **Page Up** / **Page Down** (LB / RB). It works with any controller the game can use,
+Steam Input ones included. The game keeps running and doesn't see the controller, keyboard or mouse while it's open.
 
 ## Problems and bug reports
 
