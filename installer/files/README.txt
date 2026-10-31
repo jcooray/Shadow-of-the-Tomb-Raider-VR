@@ -10,7 +10,8 @@ What you need
 - Shadow of the Tomb Raider on PC (made and tested with the Steam version, DirectX 12).
 - A PC VR headset with an OpenXR runtime (made and tested with SteamVR; others should work).
 - An NVIDIA RTX graphics card for DLSS. Other GPUs should run without DLSS but haven't been tested yet.
-- A gamepad. Most of the mod is driven from the gamepad and an overlay in the headset.
+- A gamepad, or your VR motion controllers working as one (Index and Quest Touch controllers). Most of the mod is
+  driven from the controller and an overlay in the headset.
 
 First start
 -----------
@@ -32,7 +33,12 @@ Controls
 - LB + click the right stick: first person / third person.
 - LB + hold the right stick click: aim where you look on / off.
 - LB + click the left stick: camera stabilisation on / off.
-- Keyboard: Home first person, K aim where you look, J mark a moment in the log, Ctrl+Alt+O the overlay.
+- LB + RB together: recentre the view.
+- Keyboard: Ctrl+Alt+O the overlay, Ctrl+Alt+R recentre, Home first person, K aim where you look, J mark a moment in
+  the log. Change any of these keys in the overlay's Controls page.
+- Motion controllers work as a gamepad. Index: swipe the left trackpad for the D-pad, press it for View, press the
+  right trackpad for Menu, both trackpads for the overlay. Quest Touch: Menu (hold for View), right stick click + left
+  stick for the D-pad, Menu + right stick click for the overlay.
 
 Foveated rendering (optional)
 -----------------------------
