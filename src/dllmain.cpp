@@ -143,6 +143,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reasonForCall, LPVOID) {
         // Never call LoadLibrary / create D3D devices directly inside DllMain --
         // it runs under the loader lock and D3D11CreateDeviceAndSwapChain (used in
         // present_hook.cpp) can deadlock. Defer real init to a separate thread.
+        vrmod::NoteMainThread();
         CloseHandle(CreateThread(nullptr, 0, InitThread, nullptr, 0, nullptr));
         // CheekyFoveatedDLSS, when installed and foveated rendering is on (cheeky_loader.cpp; its own worker thread).
         vrmod::CheekyLoaderStart();

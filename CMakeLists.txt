@@ -140,7 +140,7 @@ else()
 endif()
 
 target_include_directories(vrmod_dxgi_proxy PRIVATE src third_party/openvr)
-target_link_libraries(vrmod_dxgi_proxy PRIVATE minhook openxr_loader d3d11.lib dxgi.lib d3d12.lib)
+target_link_libraries(vrmod_dxgi_proxy PRIVATE minhook openxr_loader d3d11.lib dxgi.lib d3d12.lib runtimeobject.lib)
 set_target_properties(vrmod_dxgi_proxy PROPERTIES
     OUTPUT_NAME "dxgi"
     PREFIX ""

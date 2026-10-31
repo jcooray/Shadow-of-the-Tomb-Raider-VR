@@ -827,6 +827,11 @@ void HookDevice(ID3D12Device* dev) {
 
 HRESULT WINAPI hkCreateDevice(IUnknown* adapter, D3D_FEATURE_LEVEL fl, REFIID riid, void** out) {
     const HRESULT hr = oCreateDevice(adapter, fl, riid, out);
+    if (FAILED(hr)) {   // a start that never gets its device (Quest 3 over Virtual Desktop, 2026-10-31)
+        char b[96];
+        snprintf(b, sizeof(b), "UIPROBE: the game's D3D12CreateDevice FAILED, hr 0x%08lX (feature level 0x%x)", static_cast<unsigned long>(hr), fl);
+        modlog::Line(b);
+    }
     if (SUCCEEDED(hr) && out && *out) {
         ID3D12Device* dev = nullptr;
         if (SUCCEEDED(static_cast<IUnknown*>(*out)->QueryInterface(IID_PPV_ARGS(&dev))) && dev) {

@@ -1732,6 +1732,20 @@ void VrOverlayTick() {
 
     PadState pad;
     OverlayPadRead(&pad);
+    // The keyboard inside the overlay (1.0.3), for a gamepad the mod can't read: arrows = d-pad, Enter = A, Backspace = B,
+    // Page Up / Page Down = the pages (LB / RB), Home = Y (back to the default).
+    if (g_open) {
+        const auto down = [](int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; };
+        if (down(VK_UP)) pad.buttons |= XINPUT_GAMEPAD_DPAD_UP;
+        if (down(VK_DOWN)) pad.buttons |= XINPUT_GAMEPAD_DPAD_DOWN;
+        if (down(VK_LEFT)) pad.buttons |= XINPUT_GAMEPAD_DPAD_LEFT;
+        if (down(VK_RIGHT)) pad.buttons |= XINPUT_GAMEPAD_DPAD_RIGHT;
+        if (down(VK_RETURN)) pad.buttons |= XINPUT_GAMEPAD_A;
+        if (down(VK_BACK)) pad.buttons |= XINPUT_GAMEPAD_B;
+        if (down(VK_PRIOR)) pad.buttons |= XINPUT_GAMEPAD_LEFT_SHOULDER;
+        if (down(VK_NEXT)) pad.buttons |= XINPUT_GAMEPAD_RIGHT_SHOULDER;
+        if (down(VK_HOME)) pad.buttons |= XINPUT_GAMEPAD_Y;
+    }
     static bool comboWas = false, keyWas = false;
     const bool combo = (pad.buttons & kPadGuide) && (pad.buttons & XINPUT_GAMEPAD_START);
     // Keyboard fallback (Ctrl+Alt+O) for when the Guide button doesn't reach the game (e.g. Steam or the Xbox Game Bar
