@@ -12,7 +12,7 @@
 
 #define AppName "Shadow of the Tomb Raider VR"
 #ifndef AppVersion
-  #define AppVersion "1.0.4"
+  #define AppVersion "1.0.5"
 #endif
 #define AppUrl "https://github.com/jcooray/Shadow-of-the-Tomb-Raider-VR"
 

@@ -57,6 +57,7 @@
 #include "aim_watch.h"
 #include "dlss_probe.h"
 #include "eye_gaze.h"
+#include "motion_input.h"
 #include "gear_hide.h"
 #include "cam_state_probe.h"
 #include "head_drive.h"
@@ -452,7 +453,7 @@ bool InitOpenXR(ID3D11Device* device, uint32_t eyeW12 = 0, uint32_t eyeH12 = 0) 
         return false;
     }
     modlog::Line("OpenXR: session created.");
-    if (g_eyeGazeExtensionEnabled) EyeGazeInitSession(g_instance, g_session, g_systemId);
+    MotionInputInitSession(g_instance, g_session, g_systemId, g_eyeGazeExtensionEnabled);   // eye gaze's and the controllers' actions
 
     XrReferenceSpaceCreateInfo spaceCreateInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
     spaceCreateInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
@@ -968,8 +969,15 @@ void UpdateProjectionMatch(const XrView views[2]) {
     const float l0 = std::tan(std::fabs(views[0].fov.angleLeft)), r0 = std::tan(std::fabs(views[0].fov.angleRight));
     const float u0 = std::tan(std::fabs(views[0].fov.angleUp)), d0 = std::tan(std::fabs(views[0].fov.angleDown));
     const float density = (std::max)(g_recommendedW / (l0 + r0), g_recommendedH / (u0 + d0)) / static_cast<float>(std::sqrt(steamVr));
-    const uint32_t tw = static_cast<uint32_t>(2.0f * tH * density / 8.0f + 0.5f) * 8;
+    uint32_t tw = static_cast<uint32_t>(2.0f * tH * density / 8.0f + 0.5f) * 8;
     const uint32_t th = static_cast<uint32_t>(2.0f * tV * density / 8.0f + 0.5f) * 8;
+    // The game draws nothing narrower than 5:4: in a squarer window it draws a 5:4 picture across the middle and leaves
+    // black above and below (2026-10-31, Pico 4: DLSS output 1728x1384 in a 1728x1728 window; Quest 3 likewise). For a
+    // headset squarer than that (Quest, Pico, Index) the target is 5:4 at the full height: the game's FOV is chosen to
+    // cover both axes (above), so it covers the lens's height and the extra width falls outside the lens.
+    constexpr float kMinGameAspect = 1.25f;
+    const bool widened = tw < th * kMinGameAspect;
+    if (widened) tw = static_cast<uint32_t>(std::ceil(th * kMinGameAspect / 8.0f)) * 8;   // up: never under 5:4
     const float gH = t * aH, gV = t * aV;
     auto deg = [](float r) { return r * 57.2957795f; };
     std::ostringstream o;
@@ -983,7 +991,8 @@ void UpdateProjectionMatch(const XrView views[2]) {
       << " -> game frustum half-angles " << deg(std::atan(gH)) << " x " << deg(std::atan(gV)) << " deg (tan " << std::setprecision(4) << gH << " x " << gV
       << ", excess over cover H " << std::setprecision(1) << 100.0f * (gH / tH - 1.0f) << " %, V " << 100.0f * (gV / tV - 1.0f) << " %)"
       << " | backbuffer " << g_eyeWidth << "x" << g_eyeHeight << " (aspect " << std::setprecision(3) << static_cast<float>(g_eyeWidth) / (std::max)(1u, g_eyeHeight)
-      << ") | target render size " << tw << "x" << th << " (aspect " << tH / tV << ") from recommended " << g_recommendedW << "x" << g_recommendedH
+      << ") | target render size " << tw << "x" << th << " (aspect " << tH / tV << (widened ? ", widened to 5:4: the game draws nothing narrower" : "")
+      << ") from recommended " << g_recommendedW << "x" << g_recommendedH
       << " with SteamVR's resolution setting (" << std::setprecision(0) << steamVr * 100.0 << " %) taken out" << std::setprecision(2)
       << " -- set vrmod_fakedesktop.txt and the game resolution to it";
     modlog::Line(o.str());
@@ -1542,8 +1551,8 @@ void SubmitStereoFrame(ID3D11Texture2D* leftEyeTexture, ID3D11Texture2D* rightEy
         *returnedAtMs = NowMs();
         g_xrWaitFrame.Add(*returnedAtMs - waitFrameStart);
         g_lastWaitFrameMs = *returnedAtMs - waitFrameStart;
-        StallWatchdogSetPhase("xr:eyeGaze+beginFrame");
-        EyeGazeUpdate(out->predictedDisplayTime);
+        StallWatchdogSetPhase("xr:input+beginFrame");
+        MotionInputFrame(out->predictedDisplayTime, g_appSpace);   // the actions (eye gaze, controllers) synced once
         return XrCheck(xrBeginFrame(g_session, &frameBeginInfo), "xrBeginFrame");
     };
 
@@ -2961,6 +2970,7 @@ void ShutdownOpenXR() {
     if (g_swapchainLeft != XR_NULL_HANDLE) { xrDestroySwapchain(g_swapchainLeft); g_swapchainLeft = XR_NULL_HANDLE; }
     if (g_swapchainRight != XR_NULL_HANDLE) { xrDestroySwapchain(g_swapchainRight); g_swapchainRight = XR_NULL_HANDLE; }
     if (g_appSpace != XR_NULL_HANDLE) { xrDestroySpace(g_appSpace); g_appSpace = XR_NULL_HANDLE; }
+    MotionInputShutdown();
     if (g_session != XR_NULL_HANDLE) { xrDestroySession(g_session); g_session = XR_NULL_HANDLE; }
     if (g_cmdList) { g_cmdList->Release(); g_cmdList = nullptr; }
     for (auto& a : g_allocators) { if (a) { a->Release(); a = nullptr; } }

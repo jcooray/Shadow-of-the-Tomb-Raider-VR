@@ -9,12 +9,14 @@
 
 #include <atomic>
 #include <cstdlib>
+#include <cstring>
 #include <mutex>
 #include <string>
 
 #include <MinHook.h>
 
 #include "logger.h"
+#include "motion_input.h"
 #include "present_hook.h"
 
 namespace vrmod {
@@ -42,14 +44,43 @@ std::mutex g_gameMutex;
 XINPUT_GAMEPAD g_gamePad[4] = {};
 ULONGLONG g_gameAt[4] = {};
 
+// Two gamepad states as one: buttons combined, each stick axis and trigger the one pushed further.
+void MergePad(XINPUT_GAMEPAD& into, const XINPUT_GAMEPAD& g) {
+    into.wButtons |= g.wButtons;
+    if (std::abs(g.sThumbLX) > std::abs(into.sThumbLX)) into.sThumbLX = g.sThumbLX;
+    if (std::abs(g.sThumbLY) > std::abs(into.sThumbLY)) into.sThumbLY = g.sThumbLY;
+    if (std::abs(g.sThumbRX) > std::abs(into.sThumbRX)) into.sThumbRX = g.sThumbRX;
+    if (std::abs(g.sThumbRY) > std::abs(into.sThumbRY)) into.sThumbRY = g.sThumbRY;
+    if (g.bLeftTrigger > into.bLeftTrigger) into.bLeftTrigger = g.bLeftTrigger;
+    if (g.bRightTrigger > into.bRightTrigger) into.bRightTrigger = g.bRightTrigger;
+}
+
+// The motion controllers' gamepad (motion_input.cpp) goes into slot 0, merged with a real pad there; once they've been
+// in use, slot 0 reports a connected pad even with no real one. XInput readers skip a state whose packet number didn't
+// change, so slot 0 gets packet numbers of its own whenever what it returns changes.
+DWORD AddMotionPad(DWORD r, XINPUT_STATE* s) {
+    static XINPUT_GAMEPAD last{};
+    static DWORD packet = 0;
+    XINPUT_GAMEPAD v{};
+    const bool have = MotionPadGame(&v);
+    if (!have && !MotionPadEverUsed()) return r;
+    if (r != ERROR_SUCCESS) { *s = XINPUT_STATE{}; r = ERROR_SUCCESS; }
+    if (have) { MergePad(s->Gamepad, v); MotionPadNoteDelivered(0); }
+    if (std::memcmp(&last, &s->Gamepad, sizeof(last)) != 0) { last = s->Gamepad; ++packet; }
+    s->dwPacketNumber = packet;
+    return r;
+}
+
 DWORD Filter(DWORD r, DWORD index, XINPUT_STATE* s) {
     g_gameReads.fetch_add(1, std::memory_order_relaxed);
-    if (r != ERROR_SUCCESS || !s) return r;
-    if (index < 4) {
+    if (!s) return r;
+    if (r == ERROR_SUCCESS && index < 4) {   // the real pad, before the motion controllers are added
         std::lock_guard<std::mutex> lock(g_gameMutex);
         g_gamePad[index] = s->Gamepad;
         g_gameAt[index] = GetTickCount64();
     }
+    if (index == 0) r = AddMotionPad(r, s);
+    if (r != ERROR_SUCCESS) return r;
     if (g_block.load(std::memory_order_relaxed)) {
         s->Gamepad = XINPUT_GAMEPAD{};   // connected, nothing pressed
         return r;
@@ -105,9 +136,47 @@ bool GuideHeld() {
     return false;
 }
 
+// The motion controllers' gamepad merged into a Windows.Gaming.Input reading (every pad the game reads). The game
+// skips a reading whose Timestamp didn't change -- an idle real pad's doesn't -- so the controllers did nothing while
+// a pad was connected (2026-10-31; without one the game reads XInput, which got packet numbers): a merged reading that
+// differs from the last one returned gets a later Timestamp.
+void AddMotionPadWgi(wgi::GamepadReading* r) {
+    static std::mutex m;
+    static wgi::GamepadReading last{};
+    static UINT64 lastStamp = 0;
+    XINPUT_GAMEPAD v{};
+    if (!MotionPadGame(&v)) return;
+    MotionPadNoteDelivered(1);
+    const UINT64 realStamp = r->Timestamp;
+    const struct { WORD x; wgi::GamepadButtons w; } kMap[] = {
+        { XINPUT_GAMEPAD_A, wgi::GamepadButtons_A }, { XINPUT_GAMEPAD_B, wgi::GamepadButtons_B },
+        { XINPUT_GAMEPAD_X, wgi::GamepadButtons_X }, { XINPUT_GAMEPAD_Y, wgi::GamepadButtons_Y },
+        { XINPUT_GAMEPAD_LEFT_SHOULDER, wgi::GamepadButtons_LeftShoulder }, { XINPUT_GAMEPAD_RIGHT_SHOULDER, wgi::GamepadButtons_RightShoulder },
+        { XINPUT_GAMEPAD_LEFT_THUMB, wgi::GamepadButtons_LeftThumbstick }, { XINPUT_GAMEPAD_RIGHT_THUMB, wgi::GamepadButtons_RightThumbstick },
+        { XINPUT_GAMEPAD_START, wgi::GamepadButtons_Menu }, { XINPUT_GAMEPAD_BACK, wgi::GamepadButtons_View },
+        { XINPUT_GAMEPAD_DPAD_UP, wgi::GamepadButtons_DPadUp }, { XINPUT_GAMEPAD_DPAD_DOWN, wgi::GamepadButtons_DPadDown },
+        { XINPUT_GAMEPAD_DPAD_LEFT, wgi::GamepadButtons_DPadLeft }, { XINPUT_GAMEPAD_DPAD_RIGHT, wgi::GamepadButtons_DPadRight },
+    };
+    for (const auto& m : kMap) if (v.wButtons & m.x) r->Buttons = static_cast<wgi::GamepadButtons>(r->Buttons | m.w);
+    const auto axis = [](double& into, SHORT v) { const double d = v / 32767.0; if (std::abs(d) > std::abs(into)) into = d; };
+    axis(r->LeftThumbstickX, v.sThumbLX);
+    axis(r->LeftThumbstickY, v.sThumbLY);
+    axis(r->RightThumbstickX, v.sThumbRX);
+    axis(r->RightThumbstickY, v.sThumbRY);
+    if (v.bLeftTrigger / 255.0 > r->LeftTrigger) r->LeftTrigger = v.bLeftTrigger / 255.0;
+    if (v.bRightTrigger / 255.0 > r->RightTrigger) r->RightTrigger = v.bRightTrigger / 255.0;
+    std::lock_guard<std::mutex> lock(m);
+    wgi::GamepadReading cmp = *r;
+    cmp.Timestamp = last.Timestamp;
+    if (std::memcmp(&cmp, &last, sizeof(cmp)) != 0) lastStamp = (realStamp > lastStamp ? realStamp : lastStamp) + 1;
+    r->Timestamp = realStamp > lastStamp ? realStamp : lastStamp;
+    last = *r;
+}
+
 HRESULT STDMETHODCALLTYPE HkWgiReading(wgi::IGamepad* self, wgi::GamepadReading* r) {
     const HRESULT hr = g_origWgi(self, r);
     if (FAILED(hr) || !r) return hr;
+    AddMotionPadWgi(r);
     if (g_block.load(std::memory_order_relaxed)) {
         const UINT64 t = r->Timestamp;
         *r = wgi::GamepadReading{};   // connected, nothing pressed
@@ -217,6 +286,10 @@ bool OverlayPadRead(PadState* out) {
     {   // the pads the game reads itself (Steam Input's included), while it keeps reading them
         std::lock_guard<std::mutex> lock(g_gameMutex);
         for (int i = 0; i < 4; ++i) if (g_gameAt[i] && now - g_gameAt[i] < 500) merge(g_gamePad[i]);
+    }
+    {   // the motion controllers (with Guide + Menu for their overlay chord)
+        XINPUT_GAMEPAD v{};
+        if (MotionPadOverlay(&v)) merge(v);
     }
     if (!g_ex) return out->connected;
     // Disconnected slots are slow to query, so the set is rescanned every 2 s (as camera_interceptor's PadCombos).

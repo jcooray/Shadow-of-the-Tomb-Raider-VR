@@ -78,6 +78,7 @@ add_library(vrmod_dxgi_proxy SHARED
     src/stall_watchdog.cpp
     src/exit_hook.cpp
     src/key_bindings.cpp
+    src/motion_input.cpp
     src/resolution_unlock.cpp
     src/desktop_spoof.cpp
     src/settings.cpp
@@ -166,6 +167,11 @@ add_executable(vrmod_overlay_preview tools/overlay_preview.cpp src/vr_overlay.cp
 target_compile_definitions(vrmod_overlay_preview PRIVATE UNICODE _UNICODE VRMOD_DIAG=0)
 target_include_directories(vrmod_overlay_preview PRIVATE ${CMAKE_BINARY_DIR}/_deps/openxr_sdk-src/include)
 target_link_libraries(vrmod_overlay_preview PRIVATE user32 gdi32)
+
+# Offline check of the motion controllers' gamepad mapping, the Touch layout above all (tools/motion_mapper_test.cpp).
+add_executable(vrmod_motion_mapper_test tools/motion_mapper_test.cpp)
+target_include_directories(vrmod_motion_mapper_test PRIVATE src)
+target_link_libraries(vrmod_motion_mapper_test PRIVATE openxr_loader user32)
 
 add_executable(vrmod_gameaddr_test tools/gameaddr_test.cpp src/game_addresses.cpp)
 target_compile_definitions(vrmod_gameaddr_test PRIVATE GAMEADDR_TEST)

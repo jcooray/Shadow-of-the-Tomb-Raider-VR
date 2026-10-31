@@ -26,6 +26,12 @@ struct PoseF {
 // targetTimeNs (XrTime) at which a frame rendered with them is expected to be shown (Phase 7: pose prediction).
 void AerPublishViews(const PoseF views[2], int64_t targetTimeNs);
 
+// A pose in the views' OpenXR space (a controller's aim pose) against the head (the views' centre), in game camera-local
+// terms: out[0..1] = its pointing direction's yaw (left +) / pitch (up +) minus the head's, degrees; out[2..4] = its
+// position from the eyes' midpoint in the head's heading (right, forward, up), game cm; out[5..6] = its own yaw / pitch
+// from the recentre reference. False before the first views.
+bool AerHandVsHead(const PoseF& hand, float out[7]);
+
 // Present thread, once per frame: F8 recentre (shared with head tracking), Ctrl+[ / Ctrl+] world scale -/+ 5 %,
 // Ctrl+H hold the game's base camera still (stereo check), Ctrl+X 20-second axis log (docs/COORDS.md).
 void AerPollHotkeys();

@@ -293,6 +293,37 @@ bool AerHeadAimDelta(float outDelta[4]) {
     return true;
 }
 
+bool AerHandVsHead(const PoseF& hand, float out[7]) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (!g_haveViews) return false;
+    Q dh, dc;
+    V oh, oc;
+    Relative(hand, &dh, &oh);
+    Relative(Centre(g_views[0], g_views[1]), &dc, &oc);
+    const auto yawPitch = [](const Q& d, float* yaw, float* pitch) {   // camera-local: forward +Y, up +Z
+        const V f = Rot(d, { 0.0f, 1.0f, 0.0f });
+        *yaw = std::atan2(-f.x, f.y);
+        *pitch = std::asin(f.z < -1.0f ? -1.0f : f.z > 1.0f ? 1.0f : f.z);
+    };
+    float hy, hp, cy, cp;
+    yawPitch(dh, &hy, &hp);
+    yawPitch(dc, &cy, &cp);
+    float dy = hy - cy;
+    while (dy > 3.14159265f) dy -= 6.2831853f;
+    while (dy < -3.14159265f) dy += 6.2831853f;
+    const float r2d = 57.2957795f;
+    out[0] = dy * r2d;
+    out[1] = (hp - cp) * r2d;
+    // The hand's offset from the eyes' midpoint in the head's heading (right, forward, up), game cm.
+    const float ox = oh.x - oc.x, oy = oh.y - oc.y, c = std::cos(-cy), sn = std::sin(-cy);
+    out[2] = ox * c - oy * sn;
+    out[3] = ox * sn + oy * c;
+    out[4] = oh.z - oc.z;
+    out[5] = hy * r2d;   // the hand's own yaw / pitch from the recentre reference (what head aim's d is for the head)
+    out[6] = hp * r2d;
+    return true;
+}
+
 std::atomic<uint64_t> g_lastPairedFrame{0};   // the game frame the latest Present was paired with (DLSS probe)
 
 uint64_t AerLastPairedFrame() {

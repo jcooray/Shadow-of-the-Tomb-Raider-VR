@@ -32,6 +32,7 @@
 #include "ui_probe.h"
 #include "cam_state_probe.h"
 #include "head_drive.h"
+#include "motion_input.h"
 #include "face_track.h"
 #include "facing_probe.h"
 #include "body_turn.h"
@@ -1823,7 +1824,63 @@ int PadCombos() {
     return pressed;
 }
 
+// Motion controls stage 2, logging only (docs/MOTION_CONTROLS.md): where the right controller points against the head,
+// next to where the game's aim records point against its view record -- once a second while aiming (stack 2 has
+// weight), every 10 s otherwise. Nothing is written.
+void HandAimLog() {
+    static ULONGLONG last = 0;
+    static uint64_t tracked = 0, untracked = 0;
+    const ULONGLONG now = GetTickCount64();
+    float q[4], p[3];
+    const bool hand = MotionHandAim(1, q, p);
+    (hand ? tracked : untracked) += 1;
+    const uintptr_t comp = g_cameraComponent.load(std::memory_order_relaxed);
+    const float w2 = comp ? ReadFloatGuarded(comp + 0xC70) : 0.0f;
+    const bool aiming = w2 > 0.0f;
+    if (now - last < (aiming ? 1000u : 10000u)) return;
+    last = now;
+    if (!tracked && !hand) { untracked = 0; return; }   // no controllers in this session
+    char b[512];
+    int n = 0;
+    float hv[7];
+    PoseF pose{};
+    for (int k = 0; k < 4; ++k) pose.q[k] = q[k];
+    for (int k = 0; k < 3; ++k) pose.p[k] = p[k];
+    if (hand && AerHandVsHead(pose, hv)) {
+        n = snprintf(b, sizeof(b), "HANDAIM: right hand vs head yaw %+.1f pitch %+.1f deg, at %+.0f right %+.0f forward %+.0f up cm "
+                     "(own yaw %+.1f pitch %+.1f)", hv[0], hv[1], hv[2], hv[3], hv[4], hv[5], hv[6]);
+    } else {
+        n = snprintf(b, sizeof(b), "HANDAIM: right hand not tracked");
+    }
+    // The game's aim records against its view record (+0x2B0): forward = camera-local +Y, world up +Z.
+    const auto yawPitch = [](uintptr_t rec, float* yaw, float* pitch) {
+        float qq[4];
+        for (int k = 0; k < 4; ++k) qq[k] = ReadFloatGuarded(rec + kQuaternionOffset + 4 * k);
+        if (qq[0] == 0.0f && qq[1] == 0.0f && qq[2] == 0.0f && qq[3] == 0.0f) return false;
+        const float fwd[3] = { 0.0f, 1.0f, 0.0f };
+        float f[3];
+        QuatRotate(qq, fwd, f);
+        *yaw = std::atan2(-f[0], f[1]) * 57.2957795f;
+        *pitch = std::asin(f[2] < -1.0f ? -1.0f : f[2] > 1.0f ? 1.0f : f[2]) * 57.2957795f;
+        return true;
+    };
+    float vy = 0, vp = 0, ay = 0, ap = 0, by = 0, bp = 0;
+    if (comp && yawPitch(comp + 0x2B0, &vy, &vp)) {
+        const auto wrap = [](float d) { while (d > 180.0f) d -= 360.0f; while (d < -180.0f) d += 360.0f; return d; };
+        const bool a1 = yawPitch(comp + 0x450, &ay, &ap), a2 = yawPitch(comp + 0x930, &by, &bp);
+        n += snprintf(b + n, sizeof(b) - n, " | game aim vs view: +0x450 %s%+.1f/%+.1f, +0x930 %s%+.1f/%+.1f deg (yaw/pitch)",
+                      a1 ? "" : "? ", a1 ? wrap(ay - vy) : 0.0f, a1 ? ap - vp : 0.0f, a2 ? "" : "? ", a2 ? wrap(by - vy) : 0.0f, a2 ? bp - vp : 0.0f);
+    } else {
+        n += snprintf(b + n, sizeof(b) - n, " | no camera component yet");
+    }
+    snprintf(b + n, sizeof(b) - n, " | aim weight %.2f%s | hand tracked %llu of %llu frames", w2, aiming ? " (aiming)" : "",
+             static_cast<unsigned long long>(tracked), static_cast<unsigned long long>(tracked + untracked));
+    tracked = untracked = 0;
+    modlog::Line(b);
+}
+
 void PollFirstPersonHotkeys() {
+    HandAimLog();
     PollAimSync();
     CamModeWatch();
     EventMarkPollHotkey();

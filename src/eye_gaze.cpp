@@ -43,7 +43,7 @@ bool Check(XrResult r, const char* what) {
 
 } // namespace
 
-void EyeGazeInitSession(void* instance, void* session, uint64_t systemId) {
+void* EyeGazeCreateActions(void* instance, void* session, uint64_t systemId) {
     g_inst = static_cast<XrInstance>(instance);
     g_sess = static_cast<XrSession>(session);
     g_ready = false;
@@ -52,17 +52,17 @@ void EyeGazeInitSession(void* instance, void* session, uint64_t systemId) {
     props.next = &eyeProps;
     if (XR_FAILED(xrGetSystemProperties(g_inst, static_cast<XrSystemId>(systemId), &props)) || !eyeProps.supportsEyeGazeInteraction) {
         modlog::Line("EyeGaze: the headset reports no eye gaze; gaze input off.");
-        return;
+        return nullptr;
     }
     XrActionSetCreateInfo si{ XR_TYPE_ACTION_SET_CREATE_INFO };
     strcpy_s(si.actionSetName, "vrmod_gaze");
     strcpy_s(si.localizedActionSetName, "VR mod eye gaze");
-    if (!Check(xrCreateActionSet(g_inst, &si, &g_set), "xrCreateActionSet")) return;
+    if (!Check(xrCreateActionSet(g_inst, &si, &g_set), "xrCreateActionSet")) return nullptr;
     XrActionCreateInfo ai{ XR_TYPE_ACTION_CREATE_INFO };
     ai.actionType = XR_ACTION_TYPE_POSE_INPUT;
     strcpy_s(ai.actionName, "gaze");
     strcpy_s(ai.localizedActionName, "Eye gaze");
-    if (!Check(xrCreateAction(g_set, &ai, &g_gaze), "xrCreateAction")) return;
+    if (!Check(xrCreateAction(g_set, &ai, &g_gaze), "xrCreateAction")) return nullptr;
     XrPath profile = XR_NULL_PATH, pose = XR_NULL_PATH;
     xrStringToPath(g_inst, "/interaction_profiles/ext/eye_gaze_interaction", &profile);
     xrStringToPath(g_inst, "/user/eyes_ext/input/gaze_ext/pose", &pose);
@@ -71,11 +71,12 @@ void EyeGazeInitSession(void* instance, void* session, uint64_t systemId) {
     sb.interactionProfile = profile;
     sb.suggestedBindings = &binding;
     sb.countSuggestedBindings = 1;
-    if (!Check(xrSuggestInteractionProfileBindings(g_inst, &sb), "xrSuggestInteractionProfileBindings")) return;
-    XrSessionActionSetsAttachInfo at{ XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO };
-    at.countActionSets = 1;
-    at.actionSets = &g_set;
-    if (!Check(xrAttachSessionActionSets(g_sess, &at), "xrAttachSessionActionSets")) return;
+    if (!Check(xrSuggestInteractionProfileBindings(g_inst, &sb), "xrSuggestInteractionProfileBindings")) return nullptr;
+    return g_set;   // attached by motion_input.cpp together with the controllers' set
+}
+
+void EyeGazeActionsAttached() {
+    if (!g_set) return;
     XrActionSpaceCreateInfo asi{ XR_TYPE_ACTION_SPACE_CREATE_INFO };
     asi.action = g_gaze;
     asi.poseInActionSpace.orientation.w = 1.0f;
@@ -88,13 +89,9 @@ void EyeGazeInitSession(void* instance, void* session, uint64_t systemId) {
     modlog::Line("EyeGaze: eye gaze action ready (XR_EXT_eye_gaze_interaction).");
 }
 
-void EyeGazeUpdate(int64_t predictedDisplayTime) {
+void EyeGazeUpdate(int64_t predictedDisplayTime, int syncResult) {
     OpenVrGazePoll();   // SteamVR's OpenVR eye tracking, where the OpenXR action gives nothing
     if (!g_ready) return;
-    XrActiveActionSet active{ g_set, XR_NULL_PATH };
-    XrActionsSyncInfo sync{ XR_TYPE_ACTIONS_SYNC_INFO };
-    sync.countActiveActionSets = 1;
-    sync.activeActionSets = &active;
     ++g_calls;
     {
         static double lastDiag = 0.0;
@@ -120,7 +117,7 @@ void EyeGazeUpdate(int64_t predictedDisplayTime) {
             g_valid = 0;
         }
     }
-    g_lastSync = xrSyncActions(g_sess, &sync);
+    g_lastSync = static_cast<XrResult>(syncResult);   // one xrSyncActions for every action set (motion_input.cpp)
     if (XR_FAILED(g_lastSync) || g_lastSync == XR_SESSION_NOT_FOCUSED) { ++g_syncFail; return; }   // e.g. not focused
     XrActionStateGetInfo gi{ XR_TYPE_ACTION_STATE_GET_INFO };
     gi.action = g_gaze;

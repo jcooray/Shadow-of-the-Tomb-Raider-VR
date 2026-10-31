@@ -33,7 +33,8 @@ It's free and open source. If you enjoy it, you can [support its development](#s
 - **A PC VR headset and an OpenXR runtime.** I use a Pimax Dream Air with SteamVR. Other headsets and runtimes
   (Quest through Link, Air Link or Virtual Desktop; Windows Mixed Reality; Index; Vive) should work but are untested.
 - **An NVIDIA RTX graphics card** for DLSS. It hasn't been tried on AMD or Intel GPUs.
-- **A gamepad.** Xbox-style; most of the mod is driven from the gamepad and the overlay.
+- **A gamepad, or your VR motion controllers** working as one (Index and Quest Touch controllers; see Controls).
+  There is no motion-controller aiming yet.
 
 It's demanding: the game renders at the headset's full resolution, one eye per frame, at the headset's refresh rate.
 I developed it on an RTX 5090. The first start picks a render resolution for your graphics card (shown as "auto" in the
@@ -111,6 +112,20 @@ Alt or Shift if you like). Or edit the `[keys]` section of `vrmod_settings.ini` 
 `NumpadPlus`, `NumpadMinus`, `NumpadMultiply`, `NumpadDivide`, `NumpadDecimal`, `Minus`, `Equals`, `LeftBracket`,
 `RightBracket`, `Semicolon`, `Quote`, `Comma`, `Period`, `Slash`, `Backslash`, `Backtick`; `none` switches a key off.
 
+**Motion controllers** work as a gamepad, alongside a real one (switch them off in the overlay's Controls page):
+
+| Index controllers | Quest Touch controllers | Gamepad |
+|---|---|---|
+| Sticks, triggers, A / B (right) | the same | Sticks, LT / RT, A / B |
+| Left A / B | X / Y | X / Y |
+| Grips (squeeze) | Grips | LB / RB |
+| Swipe on the left trackpad | Right stick click held + left stick | D-pad |
+| Press the left trackpad | Hold Menu 1.5 s | View |
+| Press the right trackpad | Menu | Menu |
+| Press both trackpads | Menu + right stick click | Open / close the overlay |
+
+The Quest layout hasn't been tried with real controllers yet: reports welcome.
+
 In the overlay: D-pad up and down choose a line, left and right change it, **A** switches or runs it, **Y** puts it back
 to the default, **LB** / **RB** change page, and **B** closes it. On the keyboard: the arrow keys, **Enter** (A),
 **Backspace** (B), **Home** (Y) and **Page Up** / **Page Down** (LB / RB). It works with any controller the game can use,
@@ -125,6 +140,8 @@ Steam Input ones included. The game keeps running and doesn't see the controller
   place to look.
 - If the overlay won't open with Guide + Menu, Steam Input or the Xbox Game Bar is probably taking the Guide button.
   Use Ctrl+Alt+O instead.
+- If the game starts once and then not again, with nothing on screen and the game in the taskbar: that was the game's
+  launcher opening off the screen, fixed in 1.0.5. On older versions, add `-nolauncher` to the game's launch options.
 - **Problems with foveated rendering:** please report them here, not to CheekyFoveatedDLSS. The build that comes with
   the mod includes my own changes. Turn on **Foveated rendering log** in the overlay's Support page, restart the game,
   reproduce the problem, then save a bug report folder: it then includes Cheeky's log too.

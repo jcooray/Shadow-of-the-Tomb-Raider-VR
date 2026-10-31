@@ -985,6 +985,10 @@ void BuildPages() {
         p.items.push_back(Info("Aim where you look", [] { return std::string("LB + hold right stick 0.6 s"); }));
         p.items.push_back(Info("Camera stabilisation", [] { return std::string("LB + click left stick"); }));
         p.items.push_back(Info("Recentre the view", [] { return std::string("LB + RB together"); }));
+        p.items.push_back(Toggle("Motion controllers", "The VR controllers work as a gamepad: grips LB / RB, triggers LT / RT. Index: swipe the left "
+                                 "trackpad = D-pad, press it = View; right trackpad = Menu. Touch: Menu (hold: View), right stick click + left stick = D-pad.",
+                                 "motion.controllers"));
+        p.items.push_back(Info("This overlay, motion controllers", [] { return std::string("both trackpads (Index) / Menu + right stick click"); }));
         // The keyboard shortcuts, each the player's own (key_bindings.cpp): A, then the new key.
         for (int i = 0; i < static_cast<int>(KeyAction::Count); ++i) {
             const KeyAction a = static_cast<KeyAction>(i);

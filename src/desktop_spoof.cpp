@@ -323,8 +323,23 @@ LONG WINAPI hkChangeDisplaySettingsExW(LPCWSTR dev, DEVMODEW* dm, HWND hwnd, DWO
     return g_origChangeDisplaySettingsExW(dev, dm, hwnd, flags, param);
 }
 
+// The game's launcher (its settings window before it starts; skipped with the -nolauncher launch option) centres itself
+// on the fake desktop, which puts it below or right of a smaller real monitor: open, waiting for Play, but invisible --
+// the game sits in the taskbar (Grumpy John, Cactus, alvaro, 2026-10-31: "runs once, then won't start without deleting
+// the ini" -- the first run has no fake desktop yet). A top-level window that fits on the real monitor but would be
+// (partly) off it is centred on it instead; the game's own window, bigger than the monitor on purpose, isn't touched.
 HWND WINAPI hkCreateWindowExW(DWORD ex, LPCWSTR cls, LPCWSTR name, DWORD style, int x, int y, int w, int h, HWND parent, HMENU menu,
                               HINSTANCE inst, LPVOID param) {
+    const int rw = static_cast<int>(g_realW), rh = static_cast<int>(g_realH);
+    if (!parent && g_active && rw > 0 && rh > 0 && x != CW_USEDEFAULT && w > 0 && h > 0 && w <= rw && h <= rh
+        && (x < 0 || y < 0 || x + w > rw || y + h > rh)) {
+        char line[256];
+        snprintf(line, sizeof(line), "WINDOW: %ls %dx%d would open at (%d,%d), off the %dx%d monitor -- centred on it (the game's launcher)",
+                 name ? name : L"(no title)", w, h, x, y, rw, rh);
+        modlog::Line(line);
+        x = (rw - w) / 2;
+        y = (rh - h) / 2;
+    }
     const HWND hwnd = g_origCreateWindowExW(ex, cls, name, style, x, y, w, h, parent, menu, inst, param);
     static std::atomic<int> n{ 0 };
     if (!parent && w >= 640 && h >= 480 && n.fetch_add(1) < 8) {

@@ -124,6 +124,8 @@ const LiveDef kLive[] = {
     { "overlay.width_m", 0.9f, 0.4f, 2.0f, true, nullptr },
     // 1 = the overlay has opened once at World size, with its notice (vr_overlay.cpp FirstWorldSizePrompt).
     { "overlay.world_asked", 0, 0, 1, false, nullptr },
+    // 1 = the VR motion controllers work as a gamepad (motion_input.cpp; docs/MOTION_CONTROLS.md).
+    { "motion.controllers", 1, 0, 1, false, nullptr },
 };
 constexpr int kLiveCount = static_cast<int>(sizeof(kLive) / sizeof(kLive[0]));
 
