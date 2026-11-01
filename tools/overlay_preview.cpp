@@ -57,6 +57,15 @@ bool IsHeadTrackingEnabled() { return true; }
 bool EyeGazeLatest(float*, double) { return false; }
 bool OpenVrGazeLatest(int, float*, double, uint64_t*) { return true; }
 int g_eyeSupport = 1;   // "noeye": a headset without eye tracking
+bool g_updateShown = false;   // "update": a newer release
+bool UpdateAvailable(std::string* v, std::string* n) {
+    if (!g_updateShown) return false;
+    *v = "1.2.0";
+    *n = "- Draw the bow by pulling back with your right hand: press the right trigger near the bow hand, pull back, "
+         "release to loose.\n- An update notice like this one when a newer version is out.\n- Snap turning as a comfort option.";
+    return true;
+}
+std::string UpdateStatusText() { return g_updateShown ? "1.2.0 available (this is 1.1.0)" : "up to date (1.1.0)"; }
 int EyeGazeSupport() { return g_eyeSupport; }
 int OpenVrGazeSupport() { return g_eyeSupport; }
 void RequestFirstPersonToggle() { g_fp = !g_fp; }
@@ -140,6 +149,8 @@ int main(int argc, char** argv) {
     const bool controls = argc > 2 && std::string(argv[2]) == "controls";   // only the Controls page, and a key being chosen
     const bool noEye = argc > 2 && std::string(argv[2]) == "noeye";   // eye tracked foveation on a headset without eye tracking
     if (noEye) vrmod::g_eyeSupport = 0;
+    const bool update = argc > 2 && std::string(argv[2]) == "update";   // the update notice after 20 s of play
+    if (update) vrmod::g_updateShown = true;
     vrmod::OverlayXrInfo xr;
     xr.runtime = "SteamVR/OpenXR 2.18.4";
     xr.system = "Pimax Dream Air";
@@ -149,6 +160,14 @@ int main(int argc, char** argv) {
     xr.eyeH = 4592;
     vrmod::VrOverlaySetXrInfo(xr);
     Tick(0, 3);
+    if (update) {
+        for (int i = 0; i < 230; ++i) { Tick(0); Sleep(100); }
+        int w = 0, h = 0;
+        if (const uint8_t* img = vrmod::VrOverlayTakeImage(&w, &h)) WriteBmp(out + "\\update_notice.bmp", img, w, h);
+        else printf("update: no new image\n");
+        printf("done\n");
+        return 0;
+    }
     if (noEye) {   // the switch to fixed, then the restart notice after 3 s of play
         for (int i = 0; i < 50; ++i) { Tick(0); Sleep(100); }
         int w = 0, h = 0;

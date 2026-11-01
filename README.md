@@ -47,6 +47,10 @@ I developed it on an RTX 5090. The first start picks a render resolution for you
 overlay). On slower cards, also apply the **minimum spec** preset in the overlay (Rendering page) and lower the game's
 own graphics settings.
 
+**Turn off your VR runtime's motion smoothing** for this game: SteamVR's Motion Smoothing, Meta's ASW, Virtual Desktop's
+SSW or Pimax's Smart Smoothing. The mod's frame warp already makes the in-between images, and the two fight each other
+(smearing and lag). The mod tells you if SteamVR's is on; the others it can't see.
+
 **Virtual Desktop users:** its quality preset multiplies with the mod's render resolution. *Godlike* renders far more
 than *Ultra* or *High*; on mid-range cards use *High* or *Ultra*.
 
@@ -150,6 +154,13 @@ In the overlay: D-pad up and down choose a line, left and right change it, **A**
 to the default, **LB** / **RB** change page, and **B** closes it. On the keyboard: the arrow keys, **Enter** (A),
 **Backspace** (B), **Home** (Y) and **Page Up** / **Page Down** (LB / RB). It works with any controller the game can use,
 Steam Input ones included. The game keeps running and doesn't see the controller, keyboard or mouse while it's open.
+
+## Updates
+
+Once per start, about 15 seconds in, the mod asks GitHub's public API for its latest release. When there's a newer one,
+the overlay tells you once you're playing, with what's new and where to get it; you then run the new Setup yourself
+(**Update or change** keeps your settings). Nothing is sent but that request, and nothing is downloaded or installed.
+Switch it off with **Check for updates** on the overlay's Support page, which also shows the result.
 
 ## Problems and bug reports
 

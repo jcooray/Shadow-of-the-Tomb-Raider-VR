@@ -13,6 +13,7 @@ namespace vrmod {
 void* EyeGazeCreateActions(void*, void*, uint64_t) { return nullptr; }
 void EyeGazeActionsAttached() {}
 void EyeGazeUpdate(int64_t, int) {}
+void EyeGazeNotOffered() {}
 float SettingGet(const char*) { return 1.0f; }
 }
 

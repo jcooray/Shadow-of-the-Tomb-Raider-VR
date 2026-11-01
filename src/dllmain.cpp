@@ -5,6 +5,7 @@
 #pragma comment(lib, "winmm.lib")
 
 #include "cheeky_loader.h"
+#include "update_check.h"
 #include "gpu_tier.h"
 #include "settings.h"
 #include "logger.h"
@@ -65,6 +66,7 @@ DWORD WINAPI InitThread(LPVOID) {
     }
     vrmod::InstallUiProbe();   // Brief 2 H0, only with [debug] ui_probe=1 (after the unlock: never delay it)
     vrmod::LogSystemInfo();    // graphics cards, Windows, the last headset (after the unlock: never delay it)
+    vrmod::UpdateCheckStart();   // background, 15 s later: is there a newer release? (the overlay says so)
 
     if (!vrmod::InstallPresentHook()) {
         modlog::Line("Present hook installation failed; mod is inert but the game should still run normally.");

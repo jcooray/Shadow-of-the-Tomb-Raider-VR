@@ -28,6 +28,7 @@
 #include "head_tracking.h"
 #include "hud_layer.h"
 #include "key_bindings.h"
+#include "update_check.h"
 #include "logger.h"
 #include "openvr_gaze.h"
 #include "overlay_image_view_toggle.h"
@@ -1063,6 +1064,9 @@ void BuildPages() {
             p.items.push_back(log);
         }
         p.items.push_back(Info("Version", [] { return ModVersion(); }));
+        p.items.push_back(Toggle("Check for updates", "Once per start, asks GitHub for the mod's latest release and tells you here when "
+                                 "there's a newer one. Nothing else is sent, and nothing is downloaded.", "update.check"));
+        p.items.push_back(Info("Updates", [] { return UpdateStatusText(); }));
         p.items.push_back(Info("Log file", [] { return std::string("vrmod.log in the game folder"); }));
         p.items.push_back(Info("Source and updates", [] { return std::string("github.com/jcooray/Shadow-of-the-Tomb-Raider-VR"); },
                                "Free and open source (GPL-3.0). Report problems there too, with a bug report folder."));
@@ -1337,15 +1341,47 @@ void GameSettingsPrompt(ULONGLONG now) {
     if (showing < 15000 || g_open || now < g_toastUntil) return;
     done = true;
     const bool dlssOff = DlssEvaluateCount() == 0, hdr = GameSwapChainHdr();   // -1: the evaluate hook isn't in, unknown
-    if (!dlssOff && !hdr) return;
+    // SteamVR's Motion Smoothing for this game (1.1.1): only when the game runs through SteamVR (its file says nothing
+    // about Meta's ASW, Virtual Desktop's SSW or Pimax's Smart Smoothing -- the README covers those).
+    bool smoothing = false;
+    if (g_xr.runtime.find("SteamVR") != std::string::npos) {
+        const SteamVrScale v = ReadSteamVrScale();
+        smoothing = v.read && v.SmoothingOn();
+        modlog::Line(std::string("STEAMVR: Motion Smoothing for this game ") + (smoothing ? "ON" : "off") + " (global " + (v.smoothingGlobal ? "on" : "off")
+                     + ", this game's override " + std::to_string(v.smoothingOverride) + ": 0 global, 1 on, 2 off, 3 always on)");
+    }
+    if (!dlssOff && !hdr && !smoothing) return;
     std::string text;
     if (dlssOff) text += "DLSS is off in the game. The mod needs it: without DLSS the 3D can look wrong (shaking, or depth inside out), "
                          "and foveated rendering doesn't work. Turn on DLSS (Quality) in the game's Options, Display. ";
     if (hdr) text += "HDR is on in the game: the headset expects the standard image, so colours may be wrong. Turn HDR off in the "
                      "game's Options, Display. ";
-    text += "The game keeps these settings itself, so the mod can't change them for you.";
-    ShowFirstRunNotice("Game settings to change", text, "A / Enter: OK", nullptr);
-    modlog::Line(std::string("OVERLAY: game settings notice --") + (dlssOff ? " DLSS off" : "") + (hdr ? " HDR on" : ""));
+    if (dlssOff || hdr) text += "The game keeps these settings itself, so the mod can't change them for you. ";
+    if (smoothing) text += "SteamVR's Motion Smoothing is on for this game. Frame warp already makes the in-between images and the "
+                           "two fight each other (smearing, lag): in SteamVR, Settings, Video, Per-Application Video Settings, choose "
+                           "Shadow of the Tomb Raider and set Motion Smoothing to Off.";
+    ShowFirstRunNotice(smoothing && !dlssOff && !hdr ? "Turn off Motion Smoothing" : "Settings to change", text, "A / Enter: OK", nullptr);
+    modlog::Line(std::string("OVERLAY: settings notice --") + (dlssOff ? " DLSS off" : "") + (hdr ? " HDR on" : "") + (smoothing ? " SteamVR Motion Smoothing on" : ""));
+}
+
+// Update notice (1.2): a newer release on GitHub (update_check.cpp, once per start). Once the game has been showing for
+// 20 s, after the start-up notices and never over another, as a notice A dismisses: the version, the start of its
+// "What's new", and where to get it. Nothing is downloaded.
+void UpdateNoticePrompt(ULONGLONG now) {
+    static bool done = false;
+    static ULONGLONG last = 0, showing = 0;
+    if (done) return;
+    if (g_xr.eyeW && !CinematicActive() && last) showing += (std::min)(now - last, 200ULL);
+    last = now;
+    std::string version, notes;
+    if (showing < 20000 || g_open || now < g_toastUntil || g_restartPrompt || !UpdateAvailable(&version, &notes)) return;
+    done = true;
+    ShowFirstRunNotice("Update available: " + version,
+                       (notes.empty() ? std::string() : "What's new:\n" + notes + "\n\n")
+                       + "Close the game and run the new Setup from github.com/jcooray/Shadow-of-the-Tomb-Raider-VR/releases "
+                         "(choose Update or change; your settings are kept). This check can be switched off on the Support page.",
+                       "A / Enter: OK", nullptr);
+    modlog::Line("OVERLAY: update notice (" + version + ")");
 }
 
 // First run, once a level has loaded and play has gone on for 3 s: restart, to apply the render resolution. The game asks
@@ -1869,6 +1905,7 @@ void VrOverlayTick() {
     GameSettingsPrompt(now);
     FirstRestartPrompt(now);
     FirstWorldSizePrompt(now);
+    UpdateNoticePrompt(now);
 
     if (!g_open) {
         if (now < g_toastUntil) {

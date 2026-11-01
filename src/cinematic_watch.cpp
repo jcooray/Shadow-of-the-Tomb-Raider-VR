@@ -1,4 +1,5 @@
 #include "build_config.h"
+#include "afw.h"
 #include "cinematic_watch.h"
 
 #include <windows.h>
@@ -374,6 +375,7 @@ void EventMarkPollHotkey() {
     if (down && !was) {
         EventMarkNow("key");
         PlayCue(Cue::On);
+        AfwRequestCapture();   // development builds: a frame warp capture with the mark
     }
     was = down;
 }

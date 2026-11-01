@@ -122,6 +122,7 @@ add_library(vrmod_dxgi_proxy SHARED
     src/logger.cpp
     src/overlay_pad.cpp
     src/vr_overlay.cpp
+    src/update_check.cpp
     src/version.rc
 )
 
@@ -142,7 +143,7 @@ else()
 endif()
 
 target_include_directories(vrmod_dxgi_proxy PRIVATE src third_party/openvr)
-target_link_libraries(vrmod_dxgi_proxy PRIVATE minhook openxr_loader d3d11.lib dxgi.lib d3d12.lib runtimeobject.lib)
+target_link_libraries(vrmod_dxgi_proxy PRIVATE minhook openxr_loader d3d11.lib dxgi.lib d3d12.lib runtimeobject.lib winhttp.lib)
 set_target_properties(vrmod_dxgi_proxy PROPERTIES
     OUTPUT_NAME "dxgi"
     PREFIX ""
@@ -172,6 +173,9 @@ target_link_libraries(vrmod_overlay_preview PRIVATE user32 gdi32)
 add_executable(vrmod_motion_mapper_test tools/motion_mapper_test.cpp)
 target_include_directories(vrmod_motion_mapper_test PRIVATE src)
 target_link_libraries(vrmod_motion_mapper_test PRIVATE openxr_loader user32)
+
+# Offline bench for frame warp (tools/afw_bench.cpp): re-runs the warp on a capture and compares it with the real eye.
+add_executable(vrmod_afw_bench tools/afw_bench.cpp)
 
 add_executable(vrmod_gameaddr_test tools/gameaddr_test.cpp src/game_addresses.cpp)
 target_compile_definitions(vrmod_gameaddr_test PRIVATE GAMEADDR_TEST)

@@ -10,6 +10,9 @@ namespace vrmod {
 // AFW (docs/AFW.md): the eye not rendered this frame is rebuilt from the one that was (depth-based stereo warp), so
 // both eyes update every frame under AER. [render] afw, Ctrl+Alt+I toggles.
 bool AfwEnabled();
+// Development builds: save the next warped frame and the warped eye's next real frame (afw.cpp, "Capture"); a log mark
+// asks for it. Nothing in release builds.
+void AfwRequestCapture();
 void AfwSetEnabled(bool on);   // in-headset overlay
 // The angle between the headset's two eye views (each frame): over 0.5 deg the warp stands down (logged on a change).
 void AfwSetEyeViewAngle(float degrees);
