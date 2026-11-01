@@ -50,6 +50,12 @@ bool AerComputeCamera(uint64_t gameFrame, const float baseQuat[4], float outDelt
 // camera-local rotation for game * delta: yaw about +Z (up) applied after pitch about +X (right). False before the
 // first views.
 bool AerHeadAimDelta(float outDelta[4]);
+// Motion controls stage 2 (docs/MOTION_CONTROLS.md): a controller's aim pose (the views' OpenXR space) the same way --
+// its recentred yaw and pitch, roll dropped -- for aiming with the hand. False before the first views.
+bool AerHandAimDelta(const PoseF& hand, float outDelta[4]);
+// Stage 2b: the controller's position from the recentre reference (the eyes' midpoint at recentre), in game world units,
+// turned by the last base rotation -- what AER adds to the game's eye for the views, so the game eye + this = the hand.
+bool AerHandOffsetWorld(const PoseF& hand, float out[3]);
 
 // The eye (0 left, 1 right) chosen for a game frame, or -1 if that frame isn't in the ring (DLSS probe).
 int AerEyeOfFrame(uint64_t gameFrame);

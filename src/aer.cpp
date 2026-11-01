@@ -273,12 +273,49 @@ bool AerComputeCamera(uint64_t gameFrame, const float baseQuat[4], float outDelt
     return true;
 }
 
+namespace {
+
+// d's forward as yaw about +Z after pitch about +X (camera-local), roll dropped.
+void YawPitchOnly(const Q& d, float outDelta[4]);
+
+}  // namespace
+
 bool AerHeadAimDelta(float outDelta[4]) {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_haveViews) return false;
     Q d;
     V off;
     Relative(Centre(g_views[0], g_views[1]), &d, &off);
+    YawPitchOnly(d, outDelta);
+    return true;
+}
+
+bool AerHandAimDelta(const PoseF& hand, float outDelta[4]) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (!g_haveViews) return false;
+    Q d;
+    V off;
+    Relative(hand, &d, &off);
+    YawPitchOnly(d, outDelta);
+    return true;
+}
+
+bool AerHandOffsetWorld(const PoseF& hand, float out[3]) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (!g_haveViews) return false;
+    Q d;
+    V off;
+    Relative(hand, &d, &off);
+    const V w = Rot(ToQ(g_lastBase), off);
+    out[0] = w.x;
+    out[1] = w.y;
+    out[2] = w.z;
+    return true;
+}
+
+namespace {
+
+void YawPitchOnly(const Q& d, float outDelta[4]) {
     // Forward (+Y) of the head in camera-local axes; Rz(yaw) * Rx(pitch) * (0,1,0) = (-sin y cos p, cos y cos p, sin p).
     const V f = Rot(d, { 0.0f, 1.0f, 0.0f });
     const float yaw = std::atan2(-f.x, f.y);
@@ -290,8 +327,9 @@ bool AerHeadAimDelta(float outDelta[4]) {
     outDelta[1] = r.y;
     outDelta[2] = r.z;
     outDelta[3] = r.w;
-    return true;
 }
+
+}  // namespace
 
 bool AerHandVsHead(const PoseF& hand, float out[7]) {
     std::lock_guard<std::mutex> lock(g_mutex);

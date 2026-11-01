@@ -15,5 +15,9 @@ void BodyTurnGameThread(float viewYaw, bool walkingCamera);
 bool BodyTurnTurning();
 // One line for the 30 s log.
 std::string BodyTurnStats();
+// Hand aim (motion controls stage 2b): where the game's aim ray hits (or ends) -- her Player object's targeting point
+// (+0x1B10), world units. Her instance is found as for body turn (the patterned world-object pool and player index),
+// whether body turn is on or not. Game thread. False until she is known or if it doesn't read.
+bool LaraAimHitPoint(float p[3]);
 
 }  // namespace vrmod

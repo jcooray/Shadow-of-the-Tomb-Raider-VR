@@ -273,8 +273,8 @@ bool HeadDriveGameThread(uintptr_t component, uint64_t gameFrame, float quat[4],
         memcpy(quat, o, sizeof o);
         return true;
     }
-    float hd[4];
-    if (!AerHeadAimDelta(hd)) {
+    float hd[4];   // the aim direction: the head's, or the hand's while aiming with it (stage 2; the view stays the head's)
+    if (!AimDirectionDelta(hd)) {
         Release("no head views");
         return false;
     }

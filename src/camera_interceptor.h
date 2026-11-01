@@ -71,6 +71,11 @@ bool HideHeadEnabled();
 void SetHideHeadEnabled(bool on, const char* how);
 // Lara is aiming: the camera component's blend stacks use an AimCameraController (camera-mode watch, Present thread).
 bool CameraAimingNow();
+// Motion controls stage 2: the aim direction for head aim / head drive as a camera-local yaw-pitch rotation -- the
+// chosen controller's ([motion] aim_hand) while aiming with it tracked (HandAimNow), otherwise the head's
+// (AerHeadAimDelta). The view always stays on the head.
+bool AimDirectionDelta(float outDelta[4]);
+bool HandAimNow();
 // Game frames so far in which a player-controlled camera (exploration / aim / stealth) was the base camera.
 uint64_t PlayerCameraFrames();
 // The rope-shot camera (a Simple base camera right after the aim camera, while a rope arrow charges) is in use.

@@ -14,7 +14,9 @@ It's free and open source. If you enjoy it, you can [support its development](#s
   moment, and movement stays smooth. DLSS keeps a separate history for each eye.
 - **First person from Lara's eyes,** with her head hidden, her body turning to follow yours, and a neck model.
   Switch to the game's third-person camera and back at any time. Cutscenes switch over by themselves.
-- **Aim where you look.** Optional, on by default; the camera stick still works as normal.
+- **Aim with your hand or where you look.** With motion controllers, aim the bow and guns by pointing the left
+  controller while you hold the aim trigger: the shot leaves from your hand and the crosshair sits where it will hit,
+  while you keep looking wherever you like. With a gamepad, aim where you look (on by default; the stick works too).
 - **The world at life size,** and you can make it bigger or smaller in the overlay.
 - **HUD where you can see it.** The game's HUD is drawn smaller and centred, on its own layer in front of you.
 - **DLSS kept working,** at a resolution worked out for your headset. You set it as a percentage in the overlay, like
@@ -37,8 +39,8 @@ It's free and open source. If you enjoy it, you can [support its development](#s
   [OptiScaler](https://github.com/optiscaler/OptiScaler), which runs AMD's FSR 3.1 behind the game's DLSS. Tested with
   the mod on an NVIDIA card; reports from AMD and Intel players are very welcome. Turn DLSS on in the game's display
   settings afterwards. Foveated rendering needs NVIDIA's DLSS and is off with OptiScaler.
-- **A gamepad, or your VR motion controllers** working as one (Index and Quest Touch controllers; see Controls).
-  There is no motion-controller aiming yet.
+- **A gamepad, or your VR motion controllers** (Index and Quest Touch controllers; see Controls), which work as a
+  gamepad and aim with your hand.
 
 It's demanding: the game renders at the headset's full resolution, one eye per frame, at the headset's refresh rate.
 I developed it on an RTX 5090. The first start picks a render resolution for your graphics card (shown as "auto" in the
@@ -135,7 +137,14 @@ Alt or Shift if you like). Or edit the `[keys]` section of `vrmod_settings.ini` 
 | Press the right trackpad | Menu | Menu |
 | Press both trackpads | Menu + right stick click | Open / close the overlay |
 
-The Quest layout hasn't been tried with real controllers yet: reports welcome.
+**Aiming with your hand:** hold the left trigger to aim as usual, then point the **left** controller: Lara aims where
+it points, the shot leaves from it, and the crosshair sits where the shot will land, while your view stays wherever you
+look. The left hand aims for every weapon (the game only raises a weapon while the aim trigger is held, so one aiming
+hand is simplest); choose the right controller, or off, on the overlay's Controls page ("Aim with your hand"). With a
+large difference between where you look and where you aim, the game's rope-target icon can drift or vanish (the shot
+still goes where you point).
+
+The Quest layout and aiming with Quest controllers haven't been tried yet: reports welcome.
 
 In the overlay: D-pad up and down choose a line, left and right change it, **A** switches or runs it, **Y** puts it back
 to the default, **LB** / **RB** change page, and **B** closes it. On the keyboard: the arrow keys, **Enter** (A),

@@ -117,3 +117,41 @@ Licence: Hitman is LGPL-2.1; nothing is copied — the mapper is written fresh f
 - **Touch layout** (no Quest here): `vrmod_motion_mapper_test` feeds scripted input through the mapper -- 19 checks
   (stick click short / held / while walking, D-pad 4 ways, Menu tap / hold, overlay chord, Index swipes and presses,
   grips). Found and fixed: a held right stick click sent nothing, and a click while walking became a D-pad press.
+
+## Stage 2 results (2026-11-01, Index controllers, user)
+
+- **Built (172e6a5, d53b5ce):** while the aim camera is in use, the chosen controller's pointing direction ([motion]
+  aim_hand: off / left / right, default **left**) replaces the head's in the aim -- head drive writes body + hand into
+  the game's camera controllers, head aim injects the hand's d into the aim records; the view stays on the head. The aim
+  records' position moves to the hand (AerHandOffsetWorld), and the HUD centre (the crosshair) goes where the game's
+  aim ray hits, seen from the eye (AimHitPoint -- fixed addresses, diagnostic build only; to move to game_addresses'
+  patterns before a release).
+- **Verdict:** "working impressively well for a first try"; rope arrows work; looking one way and aiming another works.
+  The rope icon can vanish when look and aim differ by ~30 deg -- the game's ray still held its target (J mark), so it
+  is the shifted HUD, an edge case. Crosshair at the hit point in 94 % of aiming frames.
+- **Which hand:** the game only raises a weapon while LT is held, so aiming is never continuous like a native shooter;
+  with LT held anyway, **the left hand aims for every weapon** (less to think about). Right stays an option. The pistol's
+  two-handed grip against a one-handed point is serviceable.
+- **Later ideas:** raise-to-aim (the virtual pad holds LT while the aiming hand is up and forward -- must not fire on
+  ledge grabs); the weapon drawn at the controller (intercept its draw's World matrix, like face tracking reads Lara's)
+  -- stage 3, unproven.
+
+**Release build (2026-11-01, user):** the hit point now comes from Lara's Player object found through body turn's
+patterned pool and player index (LaraAimHitPoint), not fixed addresses -- crosshair at the hit point in 94 % of aiming
+frames; "the arm is very well aligned with the controller"; the rope-icon edge case "almost fixed". Stretch goal: the
+crosshair and the arrow tip / gun barrel don't line up (the weapon is placed by her aim animation) -- needs the weapon
+drawn at the controller (stage 3).
+
+## Planned gestures (user design, 2026-11-01)
+
+**Bow draw (1.2):** right trigger pressed with the right hand within ~15 cm of the left (bow) hand = nock; pulling it
+back ~10-15 cm along the arrow line holds RT (the game draws over time while RT is held); releasing the trigger
+releases RT = loose. A press away from the left hand is a plain RT (guns unchanged, no weapon detection); near it but no
+pull within ~0.15 s, a plain RT too (two-handed pistol). Haptic pulses on nock and full draw. Overlay switch.
+
+**Climbing (1.3):** only while Lara is on a wall / ledge (the game's attach / ledge events). Both grips held, both hands
+start at head height or above; one hand moves away from the other in the direction of travel (either hand may lead;
+down is allowed for the leading hand), and when the other hand is brought up to the same plane and axis, the mod holds
+the left stick in that direction for one climbing step (duration to measure per surface). Diagonals follow the
+direction; jumps stay on A; the left stick keeps working. **Recentre (LB + RB = both grips) is ignored while on a
+wall** (user decision), so it needs no new combo. Overlay switch.

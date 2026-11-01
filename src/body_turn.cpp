@@ -101,6 +101,22 @@ bool Find(const float root[3]) {
     return false;
 }
 
+// Her instance: kept while it is still hers; looked up again (at most every 2 s) otherwise.
+bool EnsureLara() {
+    if (!g_inited) Init();
+    if (!g_supported) return false;
+    if (g_inst && !IsLara(g_inst)) { g_inst = 0; g_turning = false; }
+    if (!g_inst) {
+        static ULONGLONG lastTry = 0;
+        const ULONGLONG t = GetTickCount64();
+        float root[3], ax[2];
+        if (t - lastTry < 2000 || !FaceRootPose(root, ax, 250.0)) return false;
+        lastTry = t;
+        if (!Find(root)) return false;
+    }
+    return true;
+}
+
 #if VRMOD_DIAG
 // Gravity measurement (development build, 2026-10-27): her position (the world object at her feet, game units) at every
 // camera update to vrmod_fall.csv, for 15 minutes from her object being found. Her falls fitted offline give the game's
@@ -151,16 +167,7 @@ void BodyTurnGameThread(float viewYaw, bool walkingCamera) {
     FallLog(now, freq);
 #endif
     if (!walkingCamera) { g_turning = false; return; }
-    // Her instance: kept while it is still hers; looked up again (at most every 2 s) otherwise.
-    if (g_inst && !IsLara(g_inst)) { g_inst = 0; g_turning = false; }
-    if (!g_inst) {
-        static ULONGLONG lastTry = 0;
-        const ULONGLONG t = GetTickCount64();
-        float root[3], ax[2];
-        if (t - lastTry < 2000 || !FaceRootPose(root, ax, 250.0)) return;
-        lastTry = t;
-        if (!Find(root)) return;
-    }
+    if (!EnsureLara()) return;
     float pos[3], ang[4];
     if (!SafeCopy(pos, g_inst + 0x10, 12) || !SafeCopy(ang, g_inst + 0x30, 16)) { g_inst = 0; return; }
     // Moving (the game turns her towards where she goes) or not upright: leave her be.
@@ -191,6 +198,16 @@ void BodyTurnGameThread(float viewYaw, bool walkingCamera) {
 
 bool BodyTurnTurning() {
     return g_turning.load(std::memory_order_relaxed);
+}
+
+bool LaraAimHitPoint(float p[3]) {
+    if (!EnsureLara()) return false;
+    uint32_t index = 0;
+    uint64_t table = 0, comp = 0, player = 0;
+    if (!SafeCopy(&index, g_indexAddr, 4) || index >= 4096 || !SafeCopy(&table, g_inst + 0xD8, 8) || !table
+        || !SafeCopy(&comp, table + static_cast<uint64_t>(index) * 8, 8) || !comp || !SafeCopy(&player, comp + 0x2A8, 8) || !player
+        || !SafeCopy(p, player + 0x1B10, 12)) return false;
+    return std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]);
 }
 
 std::string BodyTurnStats() {

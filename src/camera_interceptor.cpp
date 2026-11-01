@@ -345,6 +345,8 @@ float g_eyeOffLocal[3] = {};
 uint64_t g_eyeOffFrame = 0;   // slot frame of g_eyeOffLocal; 0 = none
 std::atomic<float> g_eyeOffLog[3];   // latest offset for the log (right, forward, up; cm)
 std::atomic<uint64_t> g_headAimMoved{0};
+std::atomic<uint64_t> g_handOriginMoved{0}, g_crossAtHit{0}, g_crossByDirection{0};
+bool HandAimPose(PoseF* pose);   // the aiming controller's pose while hand aim is on (below)
 
 void QuatRotate(const float q[4], const float v[3], float out[3]) {   // q v q*
     const float x = q[0], y = q[1], z = q[2], w = q[3];
@@ -387,7 +389,15 @@ bool HeadAimMoveToEye(int which, uintptr_t dst) {
     float w[3];
     QuatRotate(q0, g_eyeOffLocal, w);
     const float* pos = reinterpret_cast<const float*>(dst + kPositionOffset);
-    const float np[3] = { pos[0] + w[0], pos[1] + w[1], pos[2] + w[2] };
+    float np[3] = { pos[0] + w[0], pos[1] + w[1], pos[2] + w[2] };
+    // Stage 2b: aiming with a controller, the ray starts at the hand -- the game's eye plus the hand's offset as AER
+    // places the views (the eye's own offset from the recentre point is the views' business, not the record's).
+    PoseF hand{};
+    float hw[3];
+    if (HandAimPose(&hand) && AerHandOffsetWorld(hand, hw)) {
+        for (int k = 0; k < 3; ++k) np[k] += hw[k];
+        g_handOriginMoved.fetch_add(1, std::memory_order_relaxed);
+    }
     SetRecordPosition(dst, np);
     g_headAimMoved.fetch_add(1, std::memory_order_relaxed);
     return true;
@@ -398,7 +408,7 @@ void HeadAimInject(int which, uintptr_t dst, uintptr_t src) {
     if (key != g_aimDKey) {
         g_aimDKey = key;
         g_aimInjValid[0] = g_aimInjValid[1] = false;
-        if (!AerHeadAimDelta(g_aimD)) {
+        if (!AimDirectionDelta(g_aimD)) {
             g_aimD[0] = g_aimD[1] = g_aimD[2] = 0.0f;
             g_aimD[3] = 1.0f;
             g_headAimNoDelta.fetch_add(1, std::memory_order_relaxed);
@@ -860,6 +870,50 @@ void* ScanForPattern(uintptr_t base, size_t size, const unsigned char* pattern, 
 } // namespace
 
 bool CameraAimingNow() { return g_aimingNow.load(std::memory_order_relaxed); }
+
+// Stage 2: aim with a controller (docs/MOTION_CONTROLS.md). While aiming -- the aim camera in use, so the bow drawn or
+// a gun raised -- and not in a menu / cutscene, the chosen controller's pointing direction replaces the head's in the
+// aim: head drive writes body + hand into the game's camera controllers, head aim injects the hand's d into the aim
+// records; the view is built from the head as before. Not aiming, or the controller not tracked: the head, as today.
+std::atomic<uint64_t> g_handAimFrames{0}, g_handAimStarts{0};
+
+bool HandAimNow() {
+    PoseF pose{};
+    return HandAimPose(&pose);
+}
+
+namespace {
+
+bool HandAimPose(PoseF* pose) {
+    const int hand = static_cast<int>(SettingGet("motion.aim_hand"));   // 0 off, 1 left, 2 right
+    if (hand < 1 || hand > 2 || !CameraAimingNow() || g_headAimSuspended.load(std::memory_order_relaxed)) return false;
+    return MotionHandAim(hand - 1, pose->q, pose->p);
+}
+
+}  // namespace
+
+bool AimDirectionDelta(float outDelta[4]) {
+    static bool was = false;
+    const int hand = static_cast<int>(SettingGet("motion.aim_hand"));
+    float q[4], p[3];
+    bool on = hand >= 1 && hand <= 2 && CameraAimingNow() && !g_headAimSuspended.load(std::memory_order_relaxed)
+           && MotionHandAim(hand - 1, q, p);
+    if (on) {
+        PoseF pose{};
+        for (int k = 0; k < 4; ++k) pose.q[k] = q[k];
+        for (int k = 0; k < 3; ++k) pose.p[k] = p[k];
+        on = AerHandAimDelta(pose, outDelta);
+    }
+    if (on != was) {
+        was = on;
+        if (on) g_handAimStarts.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (on) {
+        g_handAimFrames.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+    return AerHeadAimDelta(outDelta);
+}
 uint64_t PlayerCameraFrames() { return g_playerCameraFrames.load(std::memory_order_relaxed); }
 bool CameraRopeShot() { return g_ropeShot.load(std::memory_order_relaxed); }
 
@@ -1301,13 +1355,43 @@ extern "C" void ApplyCameraHeadTracking(void* camera) {
     // the frame's frustum.
     {
         float ox = 0.0f, oy = 0.0f;
-        float hd[4];
-        if (haveDelta && aerFov > 0.0f && !vrmod::g_headAim.load(std::memory_order_relaxed) && !vrmod::HeadDriveActive() && vrmod::CameraAimingNow()
-            && vrmod::AerHeadAimDelta(hd)) {
+        float hd[4], hand[4];
+        // Hand aim (stage 2): the game aims along the hand, the view follows the head -- the crosshair goes where the
+        // hand's direction falls in this frame's view: d_head^-1 * d_hand * forward.
+        const bool handAim = haveDelta && aerFov > 0.0f && (vrmod::g_headAim.load(std::memory_order_relaxed) || vrmod::HeadDriveActive())
+            && vrmod::HandAimNow() && vrmod::AimDirectionDelta(hand) && vrmod::AerHeadAimDelta(hd);
+        if (handAim || (haveDelta && aerFov > 0.0f && !vrmod::g_headAim.load(std::memory_order_relaxed) && !vrmod::HeadDriveActive() && vrmod::CameraAimingNow()
+            && vrmod::AerHeadAimDelta(hd))) {
             const float qi[4] = { -hd[0], -hd[1], -hd[2], hd[3] };
             const float f[3] = { 0.0f, 1.0f, 0.0f };
             float v[3];
-            vrmod::QuatRotate(qi, f, v);
+            if (handAim) {
+                float w[3];
+                vrmod::QuatRotate(hand, f, w);
+                vrmod::QuatRotate(qi, w, v);
+                // Stage 2b: the ray starts at the hand, so the crosshair goes where it hits, seen from this frame's eye
+                // (the game's hit point, a frame old): this eye's rotation and position. Sane only in front and within
+                // 35 deg of the hand's direction (parallax up close); otherwise the direction alone, as stage 2.
+                float hp[3];
+                bool atHit = false;
+                if (vrmod::LaraAimHitPoint(hp)) {
+                    const float* ep = reinterpret_cast<const float*>(base + vrmod::kPositionOffset);
+                    const float dw[3] = { hp[0] - ep[0], hp[1] - ep[1], hp[2] - ep[2] };
+                    const float qc[4] = { -quat[0], -quat[1], -quat[2], quat[3] };
+                    float dl[3];
+                    vrmod::QuatRotate(qc, dw, dl);
+                    const float len = std::sqrt(dl[0] * dl[0] + dl[1] * dl[1] + dl[2] * dl[2]);
+                    const float vl = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+                    if (len > 30.0f && vl > 0.0f && dl[1] > 0.2f * len
+                        && (dl[0] * v[0] + dl[1] * v[1] + dl[2] * v[2]) / (len * vl) > 0.819f) {
+                        v[0] = dl[0]; v[1] = dl[1]; v[2] = dl[2];
+                        atHit = true;
+                    }
+                }
+                (atHit ? vrmod::g_crossAtHit : vrmod::g_crossByDirection).fetch_add(1, std::memory_order_relaxed);
+            } else {
+                vrmod::QuatRotate(qi, f, v);
+            }
             float tH = 0.0f, tV = 0.0f;
             vrmod::OpenXRPredictFrustum(aerFov, vrmod::OpenXRFovModel(), &tH, &tV);
             if (v[1] > 0.2f && tH > 0.0f && tV > 0.0f) {
@@ -1831,8 +1915,11 @@ void HandAimLog() {
     static ULONGLONG last = 0;
     static uint64_t tracked = 0, untracked = 0;
     const ULONGLONG now = GetTickCount64();
+    // The hand aiming ([motion] aim_hand; the right one when off), and the other one alongside.
+    const int setHand = static_cast<int>(SettingGet("motion.aim_hand"));
+    const int which = setHand == 1 ? 0 : 1;
     float q[4], p[3];
-    const bool hand = MotionHandAim(1, q, p);
+    const bool hand = MotionHandAim(which, q, p);
     (hand ? tracked : untracked) += 1;
     const uintptr_t comp = g_cameraComponent.load(std::memory_order_relaxed);
     const float w2 = comp ? ReadFloatGuarded(comp + 0xC70) : 0.0f;
@@ -1840,18 +1927,24 @@ void HandAimLog() {
     if (now - last < (aiming ? 1000u : 10000u)) return;
     last = now;
     if (!tracked && !hand) { untracked = 0; return; }   // no controllers in this session
-    char b[512];
+    char b[640];
     int n = 0;
     float hv[7];
     PoseF pose{};
     for (int k = 0; k < 4; ++k) pose.q[k] = q[k];
     for (int k = 0; k < 3; ++k) pose.p[k] = p[k];
+    const char* name = which == 0 ? "left" : "right";
     if (hand && AerHandVsHead(pose, hv)) {
-        n = snprintf(b, sizeof(b), "HANDAIM: right hand vs head yaw %+.1f pitch %+.1f deg, at %+.0f right %+.0f forward %+.0f up cm "
-                     "(own yaw %+.1f pitch %+.1f)", hv[0], hv[1], hv[2], hv[3], hv[4], hv[5], hv[6]);
+        n = snprintf(b, sizeof(b), "HANDAIM: %s hand vs head yaw %+.1f pitch %+.1f deg, at %+.0f right %+.0f forward %+.0f up cm "
+                     "(own yaw %+.1f pitch %+.1f)", name, hv[0], hv[1], hv[2], hv[3], hv[4], hv[5], hv[6]);
     } else {
-        n = snprintf(b, sizeof(b), "HANDAIM: right hand not tracked");
+        n = snprintf(b, sizeof(b), "HANDAIM: %s hand not tracked", name);
     }
+    n += snprintf(b + n, sizeof(b) - n, " | hand aim %s: %llu frames, %llu starts, origin at hand %llu, crosshair at hit %llu / by direction %llu",
+                  setHand ? (setHand == 1 ? "left" : "right") : "off",
+                  static_cast<unsigned long long>(g_handAimFrames.exchange(0)), static_cast<unsigned long long>(g_handAimStarts.exchange(0)),
+                  static_cast<unsigned long long>(g_handOriginMoved.exchange(0)), static_cast<unsigned long long>(g_crossAtHit.exchange(0)),
+                  static_cast<unsigned long long>(g_crossByDirection.exchange(0)));
     // The game's aim records against its view record (+0x2B0): forward = camera-local +Y, world up +Z.
     const auto yawPitch = [](uintptr_t rec, float* yaw, float* pitch) {
         float qq[4];

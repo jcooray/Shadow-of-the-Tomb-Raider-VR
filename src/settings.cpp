@@ -126,6 +126,8 @@ const LiveDef kLive[] = {
     { "overlay.world_asked", 0, 0, 1, false, nullptr },
     // 1 = the VR motion controllers work as a gamepad (motion_input.cpp; docs/MOTION_CONTROLS.md).
     { "motion.controllers", 1, 0, 1, false, nullptr },
+    // Stage 2: while aiming, the aim follows this controller instead of the head (off | left | right).
+    { "motion.aim_hand", 1, 0, 2, false, "off|left|right" },
 };
 constexpr int kLiveCount = static_cast<int>(sizeof(kLive) / sizeof(kLive[0]));
 

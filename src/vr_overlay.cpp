@@ -1019,6 +1019,9 @@ void BuildPages() {
         p.items.push_back(Toggle("Motion controllers", "The VR controllers work as a gamepad: grips LB / RB, triggers LT / RT. Index: swipe the left "
                                  "trackpad = D-pad, press it = View; right trackpad = Menu. Touch: Menu (hold: View), right stick click + left stick = D-pad.",
                                  "motion.controllers"));
+        p.items.push_back(Choice("Aim with your hand", "While aiming, Lara aims where this controller points; your view stays on your "
+                                 "head. Off: aim with your head (Aim where you look) or the stick.",
+                                 "motion.aim_hand", { "off", "left controller", "right controller" }));
         p.items.push_back(Info("This overlay, motion controllers", [] { return std::string("both trackpads (Index) / Menu + right stick click"); }));
         // The keyboard shortcuts, each the player's own (key_bindings.cpp): A, then the new key.
         for (int i = 0; i < static_cast<int>(KeyAction::Count); ++i) {

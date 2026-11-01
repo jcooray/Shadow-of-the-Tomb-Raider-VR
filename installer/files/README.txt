@@ -2,7 +2,8 @@ Shadow of the Tomb Raider VR
 ===========================
 
 A VR mod for Shadow of the Tomb Raider: full stereo with your head tracked, a first-person view from Lara's eyes (and
-the game's third-person camera when you want it), aiming where you look, and the HUD placed where you can see it.
+the game's third-person camera when you want it), aiming with your hand or where you look, and the HUD placed where
+you can see it.
 Free and open source (GPL-3.0). If you enjoy it, you can support development -- see the end of this file.
 
 What you need
@@ -41,6 +42,9 @@ Controls
 - Motion controllers work as a gamepad. Index: swipe the left trackpad for the D-pad, press it for View, press the
   right trackpad for Menu, both trackpads for the overlay. Quest Touch: Menu (hold for View), right stick click + left
   stick for the D-pad, Menu + right stick click for the overlay.
+- Aiming with your hand: hold the left trigger to aim, then point the left controller. Lara aims where it points, the
+  shot leaves from it and the crosshair sits where it will land; your view stays wherever you look. Choose the right
+  controller, or off, in the overlay's Controls page ("Aim with your hand").
 
 Foveated rendering (optional)
 -----------------------------
