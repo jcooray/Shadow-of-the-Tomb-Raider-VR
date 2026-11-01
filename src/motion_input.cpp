@@ -401,6 +401,7 @@ void MotionInputInitSession(void* instance, void* session, uint64_t systemId, bo
     g_sess = static_cast<XrSession>(session);
     g_ready = false;
     g_gazeSet = eyeGaze ? static_cast<XrActionSet>(EyeGazeCreateActions(instance, session, systemId)) : XR_NULL_HANDLE;
+    if (!eyeGaze) EyeGazeNotOffered();
     const bool controllers = CreateControllerActions();
     std::vector<XrActionSet> sets;
     if (g_gazeSet) sets.push_back(g_gazeSet);

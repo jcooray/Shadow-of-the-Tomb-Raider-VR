@@ -17,5 +17,8 @@ void OpenVrGazePoll();                                       // once per frame (
 // if there is none (not connected, not tracking, or older than maxAgeMs). stamp (optional): a counter that advances with
 // every new gaze sample (it stays put while the last gaze is held through a blink).
 bool OpenVrGazeLatest(int eye, float dir[3], double maxAgeMs, uint64_t* stamp = nullptr);
+// Whether SteamVR has an eye tracker: -1 not known yet, 0 no (no SteamVR, [gaze] openvr=0, or connected and no foveation
+// centre in its first minute), 1 yes (a foveation centre came, even a held one from a tracker that lost the eyes).
+int OpenVrGazeSupport();
 
 }

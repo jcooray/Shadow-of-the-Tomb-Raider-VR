@@ -28,8 +28,13 @@ void LogSystemInfo();
 
 // Foveated rendering (CheekyFoveatedDLSS) foveates only the DLSS pass -- the game's own rendering is unchanged -- so it
 // changes the GPU time per frame by a part of DLSS's cost: very little fixed (its large sharp region needs two DLSS
-// passes), much more eye tracked (a small one); DLSS 5 (neural rendering) on top takes most of that back.
-enum class Foveation { Off, Fixed, Eye, EyeDlss5 };
+// passes), much more eye tracked (a small one); DLSS 5 (neural rendering) on top takes most of that back. DLSS 5 with
+// fixed foveated rendering (1.0.8) works only in the fixed sharp middle, so its edge shows when the eyes move, and that
+// region is about six times larger, so it costs about 4 ms more on an RTX 5090: allowed, with a warning. The values are
+// stored ([render] auto_foveation), so new ones go at the end.
+enum class Foveation { Off, Fixed, Eye, EyeDlss5, FixedDlss5 };
+inline bool FoveationTracksEyes(Foveation f) { return f == Foveation::Eye || f == Foveation::EyeDlss5; }
+inline bool FoveationDlss5(Foveation f) { return f == Foveation::EyeDlss5 || f == Foveation::FixedDlss5; }
 
 // What the settings ask for and the game folder has: [foveation] mode and dlss5, CheekyFoveatedDLSS installed, DLSS 5's
 // runtime (nvngx_dlssnr.dll) beside the game.

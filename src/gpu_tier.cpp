@@ -42,7 +42,9 @@ constexpr double kFixedMs = 3.0, kPerMpixMs = 7.0 / 29.2, kTargetMs = 12.5;
 // Foveated rendering's change to the GPU time per frame at the same 29.2 million pixels (2026-10-26, RTX 5090, 150 %,
 // same save and view, Cheeky's shipped settings; GPU busy off 11.04 ms): fixed 0.55 x 0.45 10.86, eye tracked 0.20 x 0.20
 // 9.34 (DLSS stage 2.70 -> 1.11), eye tracked + DLSS 5 10.79. DLSS's cost grows with the pixels, so per million pixels.
-constexpr double kFoveationMs[] = { 0.0, -0.18, -1.70, -0.25 };
+// Fixed + DLSS 5 (2026-11-01, same 150 %, one spot): DLSS stage 6.75 ms against eye tracked + DLSS 5's 2.55 -- DLSS 5
+// works on the whole sharp region, about six times larger when fixed -- so +4.2 on eye tracked + DLSS 5's -0.25.
+constexpr double kFoveationMs[] = { 0.0, -0.18, -1.70, -0.25, 3.95 };
 constexpr double kMeasuredMpix = 29.2;
 
 std::mutex g_nameMutex;
@@ -208,8 +210,8 @@ std::string DetectedGpuName() {
 Foveation CurrentFoveation() {
     const float mode = SettingGet("foveation.mode");   // off | fixed | eye
     if (mode < 1.0f || GetFileAttributesW(L"CheekyFoveatedDLSS\\CheekyFoveatedDLSSRuntime.dll") == INVALID_FILE_ATTRIBUTES) return Foveation::Off;
-    if (mode < 2.0f) return Foveation::Fixed;
     const bool dlss5 = SettingGet("foveation.dlss5") != 0.0f && GetFileAttributesW(L"nvngx_dlssnr.dll") != INVALID_FILE_ATTRIBUTES;
+    if (mode < 2.0f) return dlss5 ? Foveation::FixedDlss5 : Foveation::Fixed;
     return dlss5 ? Foveation::EyeDlss5 : Foveation::Eye;
 }
 
@@ -218,12 +220,13 @@ const char* FoveationName(Foveation f) {
     case Foveation::Fixed: return "fixed";
     case Foveation::Eye: return "eye tracked";
     case Foveation::EyeDlss5: return "eye tracked + DLSS 5";
+    case Foveation::FixedDlss5: return "fixed + DLSS 5";
     default: return "off";
     }
 }
 
 void FoveaSize(Foveation f, float* width, float* height) {
-    const bool fixed = f == Foveation::Fixed;
+    const bool fixed = f == Foveation::Fixed || f == Foveation::FixedDlss5;
     *width = fixed ? 0.55f : 0.2f;   // fixed: Cheeky's own default
     *height = fixed ? 0.45f : 0.2f;
 }

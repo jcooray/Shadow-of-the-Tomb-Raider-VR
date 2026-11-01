@@ -16,5 +16,9 @@ void EyeGazeActionsAttached();
 void EyeGazeUpdate(int64_t predictedDisplayTime, int syncResult);
 bool EyeGazeLatest(float dir[3], double maxAgeMs);
 void EyeGazeShutdown();
+// Whether the OpenXR runtime has eye gaze for this headset: -1 not known yet (no session), 0 no (the extension isn't
+// offered, or the headset reports no eye gaze interaction), 1 yes. EyeGazeNotOffered: the runtime doesn't offer it.
+int EyeGazeSupport();
+void EyeGazeNotOffered();
 
 }

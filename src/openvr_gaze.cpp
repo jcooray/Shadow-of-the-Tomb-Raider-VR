@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <openvr.h>   // Valve's OpenVR SDK header (BSD-3-Clause, third_party/openvr); only its types are used
 
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -44,6 +45,12 @@ uint64_t g_stamp = 0;   // advances with every new (changed) gaze sample
 vr::HmdVector2_t g_prevNdc[2] = {};
 double g_changedMs = 0.0;
 bool g_staleLogged = false;
+// OpenVrGazeSupport: SteamVR answers GetEyeTrackedFoveationCenter for a headset with an eye tracker even while the
+// tracker can't see the eyes (the last centre, held); without one it never does. A minute leaves room for an eye
+// tracker that starts after the headset (Pimax Play restarts the Tobii runtime after each connect).
+constexpr double kNoTrackerMs = 60000.0;
+std::atomic<int> g_support{-1};
+double g_connectedMs = 0.0;
 
 // The runtime folder SteamVR registered: the first entry of "runtime" in openvrpaths.vrpath (JSON, backslashes escaped).
 std::wstring RuntimeFolder() {
@@ -128,8 +135,15 @@ bool NdcToHeadDirection(vr::EVREye eye, const vr::HmdVector2_t& ndc, float out[3
 
 } // namespace
 
+int OpenVrGazeSupport() {
+    return g_support.load();
+}
+
 void OpenVrGazePoll() {
-    if (g_givenUp) return;
+    if (g_givenUp) {
+        if (g_support.load() < 0) g_support.store(0);
+        return;
+    }
     if (!g_system) {
         if (NowMs() < g_nextTry) return;
         if (!GetGazeOpenVr()) {
@@ -140,10 +154,17 @@ void OpenVrGazePoll() {
         ++g_tries;
         g_nextTry = NowMs() + 10000.0;
         if (!Connect()) return;
+        g_connectedMs = NowMs();
     }
     vr::HmdVector2_t ndc[2] = {};
     const bool ok = g_system->GetEyeTrackedFoveationCenter(&ndc[0], &ndc[1]);
     const double now = NowMs();
+    if (ok && g_support.load() != 1) {
+        g_support.store(1);
+    } else if (!ok && g_support.load() < 0 && now - g_connectedMs > kNoTrackerMs) {
+        g_support.store(0);
+        modlog::Line("OpenVR gaze: no foveation centre from SteamVR in a minute -- this headset has no eye tracker there.");
+    }
     bool changed = false;
     if (!ok || memcmp(ndc, g_prevNdc, sizeof ndc) != 0) {
         memcpy(g_prevNdc, ndc, sizeof ndc);

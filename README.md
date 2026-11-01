@@ -9,9 +9,9 @@ It's free and open source. If you enjoy it, you can [support its development](#s
 
 ## What it does
 
-- **Full stereo 3D, head tracked.** The game renders one eye per frame and the mod pairs them up for the headset
-  (alternate-eye rendering). Frame warp builds the other eye's image from the one just rendered and its depth, so
-  both eyes get a new image every frame and movement stays smooth.
+- **Full stereo 3D at full resolution per eye, head tracked.** Each frame the game renders one eye, and frame warp
+  (AFW) builds the other eye's image from it and its depth, so both eyes get a new image every frame, from the same
+  moment, and movement stays smooth. DLSS keeps a separate history for each eye.
 - **First person from Lara's eyes,** with her head hidden, her body turning to follow yours, and a neck model.
   Switch to the game's third-person camera and back at any time. Cutscenes switch over by themselves.
 - **Aim where you look.** Optional, on by default; the camera stick still works as normal.
@@ -23,7 +23,7 @@ It's free and open source. If you enjoy it, you can [support its development](#s
   straight away, and you're asked to keep or undo it when you leave the page. There are presets for slower GPUs.
 - **Optional foveated rendering** with [CheekyFoveatedDLSS](https://github.com/ClarkCheekyKent/CheekyFoveatedDLSS):
   where you look (with an eye-tracked headset) or the middle of your view kept at full quality and the rest slightly
-  softer, for less GPU time. With eye tracking, optionally DLSS 5 neural rendering too (experimental).
+  softer, for less GPU time. Optionally DLSS 5 neural rendering too (experimental, made for eye tracking).
 
 ## What you need
 
@@ -67,8 +67,10 @@ shows "DLSS max").
    - **Eye tracked:** wherever you look stays at full quality, freeing about 15 % of GPU time, so the automatic
      resolution is about 30 % higher. Needs eye tracking that reaches SteamVR or OpenXR (e.g. Pimax Crystal / Crystal
      Super / Dream Air, Valve Steam Frame, Varjo, Vive Pro Eye / Focus Vision, Quest Pro).
-   - **DLSS 5 neural rendering** (experimental, eye tracked only): a more lifelike image. It uses about as much GPU time
-     as eye tracking saves. The mod doesn't include NVIDIA's `nvngx_dlssnr.dll`; Setup looks for one that came with
+   - **DLSS 5 neural rendering** (experimental): a more lifelike image where you look. With eye tracking it uses about
+     as much GPU time as eye tracking saves. It also runs with fixed foveated rendering, but then it covers only the
+     middle of your view, its edge is easy to see when you look around, and the larger area costs much more GPU time
+     (about 4 ms more per frame on an RTX 5090, so the automatic resolution is lower). The mod doesn't include NVIDIA's `nvngx_dlssnr.dll`; Setup looks for one that came with
      another game on your PC (e.g. Crimson Desert, No Man's Sky) and copies it into the game folder. It has to suit your
      graphics card (NVIDIA's current build is for the RTX 50 series).
 

@@ -34,7 +34,8 @@ count: a value that moves by itself (first person switched off by a cutscene) is
 - **Rendering:** apply minimum-spec settings / apply standard settings (presets, below), render resolution (restart,
   below), foveated rendering off / fixed / eye tracked (restart; each mode writes its sharp region size to Cheeky's ini,
   and a new install's automatic render resolution follows it), foveated region size (restart; Cheeky's Width / Height,
-  in 5 % steps keeping the mode's shape), DLSS 5 (restart; eye tracked only, with `nvngx_dlssnr.dll` beside the game),
+  in 5 % steps keeping the mode's shape), DLSS 5 (restart; fixed or eye tracked, with `nvngx_dlssnr.dll` beside the game; with fixed a warning that its edge
+  shows),
   eye tracking through SteamVR (restart), render mode (restart), frame warp (aer), in-engine cutscenes stereo / mono,
   headset refresh rate (the rates the runtime offers through XR_FB_display_refresh_rate), overscan, head pose prediction,
   flat screen mode, and last DLSS history per eye (troubleshooting; on by default and in both presets).

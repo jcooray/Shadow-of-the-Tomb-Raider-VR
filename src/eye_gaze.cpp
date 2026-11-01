@@ -24,6 +24,7 @@ XrAction g_gaze = XR_NULL_HANDLE;
 XrSpace g_gazeSpace = XR_NULL_HANDLE;
 XrSpace g_viewSpace = XR_NULL_HANDLE;
 bool g_ready = false;
+std::atomic<int> g_support{-1};
 
 std::mutex g_mutex;
 float g_dir[3] = { 0.0f, 0.0f, -1.0f };
@@ -43,6 +44,14 @@ bool Check(XrResult r, const char* what) {
 
 } // namespace
 
+int EyeGazeSupport() {
+    return g_support.load();
+}
+
+void EyeGazeNotOffered() {
+    g_support.store(0);
+}
+
 void* EyeGazeCreateActions(void* instance, void* session, uint64_t systemId) {
     g_inst = static_cast<XrInstance>(instance);
     g_sess = static_cast<XrSession>(session);
@@ -51,9 +60,11 @@ void* EyeGazeCreateActions(void* instance, void* session, uint64_t systemId) {
     XrSystemProperties props{ XR_TYPE_SYSTEM_PROPERTIES };
     props.next = &eyeProps;
     if (XR_FAILED(xrGetSystemProperties(g_inst, static_cast<XrSystemId>(systemId), &props)) || !eyeProps.supportsEyeGazeInteraction) {
+        g_support.store(0);
         modlog::Line("EyeGaze: the headset reports no eye gaze; gaze input off.");
         return nullptr;
     }
+    g_support.store(1);
     XrActionSetCreateInfo si{ XR_TYPE_ACTION_SET_CREATE_INFO };
     strcpy_s(si.actionSetName, "vrmod_gaze");
     strcpy_s(si.localizedActionSetName, "VR mod eye gaze");

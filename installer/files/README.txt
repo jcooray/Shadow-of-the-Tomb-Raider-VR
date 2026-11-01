@@ -50,8 +50,9 @@ slightly softer; only the DLSS pass gets cheaper. Fixed keeps the middle sharp a
 30 % higher. Change it in the overlay: Rendering > Foveated rendering (after a restart). CheekyFoveatedDLSS's own menu
 is on F3.
 
-DLSS 5 neural rendering (experimental, eye tracked only): a more lifelike image, using about as much GPU time as eye
-tracking saves. NVIDIA's nvngx_dlssnr.dll is not included with the mod: Setup copies one that came with another game on
+DLSS 5 neural rendering (experimental): a more lifelike image where you look, using about as much GPU time as eye
+tracking saves. It also runs with fixed foveated rendering, but then it covers only the middle of your view, its edge
+is easy to see when you look around, and the larger area costs much more GPU time: it is made for eye tracking. NVIDIA's nvngx_dlssnr.dll is not included with the mod: Setup copies one that came with another game on
 your PC into the game folder (and removes that copy again when you uninstall). Switch it in the overlay: Rendering >
 DLSS 5.
 

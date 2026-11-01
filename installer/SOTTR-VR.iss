@@ -16,7 +16,7 @@
 
 #define AppName "Shadow of the Tomb Raider VR"
 #ifndef AppVersion
-  #define AppVersion "1.0.7"
+  #define AppVersion "1.0.8"
 #endif
 #define AppUrl "https://github.com/jcooray/Shadow-of-the-Tomb-Raider-VR"
 
@@ -116,7 +116,7 @@ var
   FoveationPage: TWizardPage;
   FovNone, FovFixed, FovEye: TNewRadioButton;
   Dlss5Check: TNewCheckBox;
-  Dlss5Status: TNewStaticText;
+  Dlss5Desc, Dlss5Status: TNewStaticText;
   FoveationShown: Boolean;
   Dlss5Wanted, Dlss5Updating: Boolean;   { the player's DLSS 5 choice, kept while the box is unavailable }
   Dlss5Source: String;             { the nvngx_dlssnr.dll DLSS 5 would use; '' = none found }
@@ -585,9 +585,19 @@ end;
 procedure UpdateDlss5(Sender: TObject);
 begin
   Dlss5Updating := True;
-  Dlss5Check.Enabled := FovEye.Checked and (Dlss5Source <> '');
+  Dlss5Check.Enabled := (FovEye.Checked or FovFixed.Checked) and (Dlss5Source <> '');
   Dlss5Check.Checked := Dlss5Check.Enabled and Dlss5Wanted;
   Dlss5Updating := False;
+  { With fixed foveated rendering DLSS 5 stays in the middle, so its edge shows when the eyes move: said here. }
+  if FovFixed.Checked then
+    Dlss5Desc.Caption := 'A more lifelike image where you look. With fixed foveated rendering it covers only the middle ' +
+      'of your view, so its edge is easy to see when you look around, and that larger area costs much more GPU time ' +
+      '(the automatic resolution is lower): it is made for eye tracking.'
+  else
+    Dlss5Desc.Caption := 'A more lifelike image where you look. It uses about as much GPU time as eye tracking saves, ' +
+      'so the automatic resolution stays as without foveated rendering.';
+  Dlss5Desc.AdjustHeight;
+  Dlss5Status.Top := Dlss5Desc.Top + Dlss5Desc.Height + ScaleY(4);
 end;
 
 procedure Dlss5Clicked(Sender: TObject);
@@ -651,9 +661,8 @@ begin
   Dlss5Check.Width := FoveationPage.SurfaceWidth - Indent;
   Dlss5Check.Height := ScaleY(17);
   Dlss5Check.Caption := 'DLSS 5 neural rendering (experimental)';
-  T := AddText('A more lifelike image. It uses about as much GPU time as eye tracking saves, so the automatic ' +
-    'resolution stays as without foveated rendering.', Indent * 2, Dlss5Check.Top + Dlss5Check.Height + ScaleY(2));
-  Dlss5Status := AddText('', Indent * 2, T.Top + T.Height + ScaleY(4));
+  Dlss5Desc := AddText('', Indent * 2, Dlss5Check.Top + Dlss5Check.Height + ScaleY(2));
+  Dlss5Status := AddText('', Indent * 2, Dlss5Desc.Top + ScaleY(30));
   FovNone.Checked := True;
   FovNone.OnClick := @UpdateDlss5;
   FovFixed.OnClick := @UpdateDlss5;
@@ -765,7 +774,7 @@ end;
 
 function Dlss5On: Boolean;
 begin
-  Result := FovEye.Checked and (Dlss5Source <> '') and Dlss5Check.Checked and not OptiOn;
+  Result := (FovEye.Checked or FovFixed.Checked) and (Dlss5Source <> '') and Dlss5Check.Checked and not OptiOn;
 end;
 
 function Dlss5Value(Param: String): String;

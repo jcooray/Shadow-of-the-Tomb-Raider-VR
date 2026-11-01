@@ -128,6 +128,10 @@ void ShowAutoSettingsNotice(bool restartLater, float pct);   // StartupMessages 
 // The render resolution check (StartupMessages): done at least once, and whether the game runs at another size than the
 // one set (a restart pending). First run: the restart notice is still to show once a level has loaded.
 bool g_resChecked = false, g_restartPending = false, g_restartPrompt = false;
+// Eye tracked foveated rendering was switched off this start (no eye tracking anywhere): the restart notice says so.
+bool g_eyeFallback = false, g_eyeFallbackDlss5 = false;
+constexpr const char* kDlss5FixedWarning = "DLSS 5 with fixed foveated rendering: it works only in the middle of your view, so "
+    "its edge is easy to see when you look around, and that larger area costs much more GPU time. It's made for eye tracking.";
 
 // Frame rate (ticks are presented frames).
 double g_fps = 0.0, g_frameMsAvg = 0.0, g_frameMsMax = 0.0;
@@ -356,7 +360,7 @@ void WriteCheekyFoveaSize(float w, float h) {
 void WriteCheekyFoveation(bool modeSize) {
     const Foveation f = CurrentFoveation();
     IniWriteKeys(kCheekyIni, { { "CheekyFoveatedDLSS.Enabled", f == Foveation::Off ? "0" : "1" },
-                               { "CheekyFoveatedDLSS.NrEnabled", f == Foveation::EyeDlss5 ? "1" : "0" } });
+                               { "CheekyFoveatedDLSS.NrEnabled", FoveationDlss5(f) ? "1" : "0" } });
     if (modeSize && f != Foveation::Off) {
         float w = 0.0f, h = 0.0f;
         FoveaSize(f, &w, &h);
@@ -487,6 +491,23 @@ void StartupMessages() {
         welcomed = true;
         firstRun = SettingsFirstRun();
     }
+    // Eye tracked foveated rendering on a headset without eye tracking (1.0.8): neither the OpenXR runtime nor SteamVR has
+    // any -- Genf's Pimax 8KX on Pimax's runtime, with DLSS 5 on as well. Switched off, as Setup recommends without eye
+    // tracking (DLSS 5 goes with it; fixed + DLSS 5 stays a choice in the overlay), which applies at the next start:
+    // asked for once a level has loaded.
+    if (!g_eyeFallback && !g_open && SettingGet("foveation.mode") >= 2.0f && FoveationTracksEyes(CurrentFoveation())
+        && EyeGazeSupport() == 0 && OpenVrGazeSupport() == 0) {
+        const bool dlss5 = FoveationDlss5(CurrentFoveation());
+        g_eyeFallback = true;
+        g_eyeFallbackDlss5 = dlss5;
+        SettingSet("foveation.mode", 0.0f);
+        WriteCheekyFoveation(true);
+        AutoResolutionFollow();
+        SaveNow();
+        g_restartPrompt = true;
+        modlog::Line(std::string("OVERLAY: eye tracked foveated rendering") + (dlss5 ? " + DLSS 5" : "") + ", but this headset has no eye "
+                     "tracking (OpenXR runtime and SteamVR) -- switched off, applies at the next start (restart asked for in a level)");
+    }
     // Eye tracked foveated rendering with no eye tracking: its small sharp region stays in the middle. Said once, after a
     // minute of play without any gaze (a headset without eye tracking, or its tracker not running).
     static ULONGLONG gazeCheck = 0, playSince = 0;
@@ -496,7 +517,7 @@ void StartupMessages() {
         float d[3];
         if (EyeGazeLatest(d, 1000.0) || OpenVrGazeLatest(0, d, 1000.0)) {
             gazeDone = true;
-        } else if (CurrentFoveation() < Foveation::Eye || MenuScreenActive() || CinematicActive() || !IsHeadTrackingEnabled()) {
+        } else if (!FoveationTracksEyes(CurrentFoveation()) || MenuScreenActive() || CinematicActive() || !IsHeadTrackingEnabled()) {
             playSince = 0;
         } else if (!playSince) {
             playSince = now;
@@ -520,8 +541,8 @@ void StartupMessages() {
     if (firstRun) {   // first run: the settings chosen for this PC; the restart that applies them once a level has loaded
         firstRun = false;
         notified = std::to_string(w) + "x" + std::to_string(h);
-        g_restartPrompt = g_restartPending;
-        ShowAutoSettingsNotice(g_restartPending, pct);
+        g_restartPrompt = g_restartPrompt || g_restartPending;
+        ShowAutoSettingsNotice(g_restartPrompt, pct);
         return;
     }
     if (w == g_xr.eyeW && h == g_xr.eyeH) {
@@ -584,7 +605,7 @@ void BuildPages() {
            "resolution (Rendering page)."));
         p.items.push_back(Info("Rendering", [] {
             const RenderMode m = GetRenderMode();
-            std::string s = m == RenderMode::Aer ? "alternate eye (AER)" : m == RenderMode::Mono ? "mono" : "side by side";
+            std::string s = m == RenderMode::Aer ? "alternate eye" : m == RenderMode::Mono ? "mono" : "side by side";
             if (m == RenderMode::Aer) s += AfwEnabled() ? " + frame warp" : "";
             const int d = DlssPerEyeState();
             s += d < 0 ? ", DLSS per eye unavailable" : d ? ", DLSS per eye" : "";
@@ -728,8 +749,10 @@ void BuildPages() {
             b.preset = true;
             p.items.push_back(b);
         }
-        p.items.push_back(Choice("Render mode", "Alternate eye renders each eye in turn with its own head pose (recommended). Side by side uses the game's own 3D.",
-                                 "render.mode", { "side by side", "mono", "alternate eye (AER)" }, true));
+        // "Alternate eye + frame warp" (1.0.8), not "AER": older alternate-eye mods without a warp left a poor name for it.
+        p.items.push_back(Choice("Render mode", "One eye rendered per frame at full resolution, the other built from it by frame warp "
+                                 "(recommended). Side by side: the game's own 3D, half width per eye.",
+                                 "render.mode", { "side by side", "mono", "alternate eye + frame warp" }, true));
         {
             Item r = Number("Render resolution", "Like SteamVR's render resolution: 100 % is SteamVR's 100 %. Higher is sharper if your "
                             "card has headroom (SteamVR's Auto picked 150 % on an RTX 5090). auto: chosen for your card.",
@@ -815,6 +838,7 @@ void BuildPages() {
                 WriteCheekyFoveation(true);
                 AutoResolutionFollow();
                 SaveSoon();
+                if (CurrentFoveation() == Foveation::FixedDlss5) Message(kDlss5FixedWarning, 8000);
             };
             f.change = [setMode](int d) { setMode(static_cast<float>(((static_cast<int>(SettingGet("foveation.mode")) + d) % 3 + 3) % 3)); };
             f.activate = [setMode] { setMode(static_cast<float>((static_cast<int>(SettingGet("foveation.mode")) + 1) % 3)); };
@@ -866,16 +890,22 @@ void BuildPages() {
             p.items.push_back(z);
         }
         {
-            // DLSS 5 (Cheeky's DLSS-NR): eye tracked only, with NVIDIA's runtime beside the game (Setup copies one).
+            // DLSS 5 (Cheeky's DLSS-NR): with foveated rendering, and NVIDIA's runtime beside the game (Setup copies one).
+            // It works in the sharp region only; with fixed foveated rendering that stays in the middle, so its edge
+            // shows when the eyes move -- allowed, with a warning (1.0.8).
             const bool runtime = GetFileAttributesW(L"nvngx_dlssnr.dll") != INVALID_FILE_ATTRIBUTES;
-            Item n = Toggle("DLSS 5 (experimental)", "NVIDIA's neural rendering, for a more lifelike image. It uses about as much GPU "
-                            "time as eye tracking saves. With eye tracked foveated rendering only.", "foveation.dlss5", nullptr,
-                            [](bool) { WriteCheekyFoveation(false); AutoResolutionFollow(); }, true);
-            n.enabled = [cheeky, runtime] { return cheeky && runtime && SettingGet("foveation.mode") >= 2.0f; };
+            Item n = Toggle("DLSS 5 (experimental)", "NVIDIA's neural rendering, for a more lifelike image where you look. Made for "
+                            "eye tracking; with fixed foveated rendering its edge is easy to see and it costs much more.", "foveation.dlss5", nullptr,
+                            [](bool on) {
+                                WriteCheekyFoveation(false);
+                                AutoResolutionFollow();
+                                if (on && CurrentFoveation() == Foveation::FixedDlss5) Message(kDlss5FixedWarning, 8000);
+                            }, true);
+            n.enabled = [cheeky, runtime] { return cheeky && runtime && SettingGet("foveation.mode") >= 1.0f; };
             n.value = [cheeky, runtime] {
                 if (!cheeky) return std::string("not installed");
                 if (!runtime) return std::string("nvngx_dlssnr.dll not found");
-                if (SettingGet("foveation.mode") < 2.0f) return std::string("eye tracked only");
+                if (SettingGet("foveation.mode") < 1.0f) return std::string("foveated rendering off");
                 return std::string(SettingGet("foveation.dlss5") != 0.0f ? "On" : "Off");
             };
             p.items.push_back(n);
@@ -1255,6 +1285,7 @@ void ShowAutoSettingsNotice(bool restartLater, float pct) {
     case Foveation::Fixed: fov = " (with fixed foveated rendering)"; break;
     case Foveation::Eye: fov = " (with eye tracked foveated rendering)"; break;
     case Foveation::EyeDlss5: fov = " (with eye tracked foveated rendering and DLSS 5)"; break;
+    case Foveation::FixedDlss5: fov = " (with fixed foveated rendering and DLSS 5)"; break;
     default: break;
     }
     const std::string chosen = "Render resolution " + Fmt("%.0f", pct) + " % for " + (gpu.empty() ? std::string("your graphics card") : "your " + gpu)
@@ -1326,9 +1357,11 @@ void FirstRestartPrompt(ULONGLONG now) {
     if (!playSince) playSince = now;
     if (now - playSince < 3000) return;
     g_restartPrompt = false;
-    ShowFirstRunNotice("Restart the game",
-                       "The render resolution chosen for your PC applies after a restart. Press A, confirm the game's quit message, "
-                       "then start the game again.",
+    const std::string why = !g_eyeFallback ? std::string("The render resolution chosen for your PC applies after a restart.")
+        : std::string("Your headset has no eye tracking, so foveated rendering is now off: your whole view at full quality")
+          + (g_eyeFallbackDlss5 ? ", DLSS 5 off with it (it can still run with fixed foveated rendering, Rendering page)" : "")
+          + ". This" + (g_restartPending ? " and the render resolution chosen for your PC apply" : " applies") + " after a restart.";
+    ShowFirstRunNotice("Restart the game", why + " Press A, confirm the game's quit message, then start the game again.",
                        "A / Enter: quit the game", [] { QuitForRestart(); });
     modlog::Line("OVERLAY: restart notice (A / Enter, then the game's quit message; the player starts it again)");
 }

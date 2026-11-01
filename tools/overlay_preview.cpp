@@ -56,6 +56,9 @@ bool CinematicActive() { return false; }
 bool IsHeadTrackingEnabled() { return true; }
 bool EyeGazeLatest(float*, double) { return false; }
 bool OpenVrGazeLatest(int, float*, double, uint64_t*) { return true; }
+int g_eyeSupport = 1;   // "noeye": a headset without eye tracking
+int EyeGazeSupport() { return g_eyeSupport; }
+int OpenVrGazeSupport() { return g_eyeSupport; }
 void RequestFirstPersonToggle() { g_fp = !g_fp; }
 bool HeadAimEnabled() { return g_aim; }
 void SetHeadAimEnabled(bool on, const char*) { g_aim = on; }
@@ -135,6 +138,8 @@ int main(int argc, char** argv) {
         return 0;
     }
     const bool controls = argc > 2 && std::string(argv[2]) == "controls";   // only the Controls page, and a key being chosen
+    const bool noEye = argc > 2 && std::string(argv[2]) == "noeye";   // eye tracked foveation on a headset without eye tracking
+    if (noEye) vrmod::g_eyeSupport = 0;
     vrmod::OverlayXrInfo xr;
     xr.runtime = "SteamVR/OpenXR 2.18.4";
     xr.system = "Pimax Dream Air";
@@ -144,6 +149,14 @@ int main(int argc, char** argv) {
     xr.eyeH = 4592;
     vrmod::VrOverlaySetXrInfo(xr);
     Tick(0, 3);
+    if (noEye) {   // the switch to fixed, then the restart notice after 3 s of play
+        for (int i = 0; i < 50; ++i) { Tick(0); Sleep(100); }
+        int w = 0, h = 0;
+        if (const uint8_t* img = vrmod::VrOverlayTakeImage(&w, &h)) WriteBmp(out + "\\noeye_restart.bmp", img, w, h);
+        else printf("noeye: no new image\n");
+        printf("done\n");
+        return 0;
+    }
     if (controls) {
         auto shot = [&](const char* name) {
             Sleep(600);
