@@ -44,11 +44,15 @@ SteamVrScale ReadSteamVrScale() {
     const bool haveSteamvr = block("steamvr", &a, &b);
     r.manual = haveSteamvr && value("supersampleManualOverride", a, b, 0.0) != 0.0;
     r.global = r.manual ? value("supersampleScale", a, b, 1.0) : value("gpuSpeedRenderTargetScale", 0, s.size(), 1.0);
+    if (haveSteamvr) r.smoothingGlobal = value("motionSmoothing", a, b, 1.0) != 0.0;
     wchar_t id[32] = L"750920";   // SOTTR on Steam; SteamAppId is set when Steam starts the game
     GetEnvironmentVariableW(L"SteamAppId", id, 32);
     std::string app = "steam.app.";
     for (const wchar_t* c = id; *c; ++c) app += static_cast<char>(*c);
-    if (block(app, &a, &b)) r.perApp = value("resolutionScale", a, b, 100.0);
+    if (block(app, &a, &b) || block("system.generated.sottr.exe", &a, &b)) {   // Steam's id, or the Epic / GOG exe's entry
+        r.perApp = value("resolutionScale", a, b, 100.0);
+        r.smoothingOverride = static_cast<int>(value("motionSmoothingOverride", a, b, 0.0));
+    }
     if (r.global <= 0.0) r.global = 1.0;
     if (r.perApp <= 0.0) r.perApp = 100.0;
     r.read = true;

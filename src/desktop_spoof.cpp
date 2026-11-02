@@ -307,6 +307,10 @@ void ApplyGameSettings() {
     };
     force(L"EnableDX12", "DirectX 12", 1, "the mod works on the game's DirectX 12 renderer");
     force(L"HDR", "HDR", 0, "the headset gets the game's standard 8-bit image");
+    // Motion blur (1.1.1, found by Grumpy John): in alternate-eye rendering the camera moves by the eye distance every
+    // frame, so the game blurs near objects (Lara in third person) as if they were moving. Not yet checked whether the
+    // game takes this from the registry or its profile, so the READMEs also say to turn it off.
+    force(L"MotionBlur", "motion blur", 0, "the eye switching every frame reads as motion: near objects smear");
 }
 
 // The displays Windows reports (adapters, monitors, current modes) -- e.g. a streaming app's virtual monitor -- and, while

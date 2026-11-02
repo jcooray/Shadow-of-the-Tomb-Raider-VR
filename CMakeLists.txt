@@ -122,6 +122,7 @@ add_library(vrmod_dxgi_proxy SHARED
     src/logger.cpp
     src/overlay_pad.cpp
     src/vr_overlay.cpp
+    src/update_check.cpp
     src/version.rc
 )
 
@@ -142,7 +143,7 @@ else()
 endif()
 
 target_include_directories(vrmod_dxgi_proxy PRIVATE src third_party/openvr)
-target_link_libraries(vrmod_dxgi_proxy PRIVATE minhook openxr_loader d3d11.lib dxgi.lib d3d12.lib runtimeobject.lib)
+target_link_libraries(vrmod_dxgi_proxy PRIVATE minhook openxr_loader d3d11.lib dxgi.lib d3d12.lib runtimeobject.lib winhttp.lib)
 set_target_properties(vrmod_dxgi_proxy PROPERTIES
     OUTPUT_NAME "dxgi"
     PREFIX ""

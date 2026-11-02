@@ -128,6 +128,8 @@ const LiveDef kLive[] = {
     { "motion.controllers", 1, 0, 1, false, nullptr },
     // Stage 2: while aiming, the aim follows this controller instead of the head (off | left | right).
     { "motion.aim_hand", 1, 0, 2, false, "off|left|right" },
+    // 1 = once per start, ask GitHub for the latest release and say in the overlay when it is newer (update_check.cpp).
+    { "update.check", 1, 0, 1, false, nullptr },
 };
 constexpr int kLiveCount = static_cast<int>(sizeof(kLive) / sizeof(kLive[0]));
 

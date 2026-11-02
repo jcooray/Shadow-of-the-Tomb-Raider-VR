@@ -10,6 +10,11 @@ What you need
 -------------
 - Shadow of the Tomb Raider on PC (made and tested with the Steam version, DirectX 12).
 - A PC VR headset with an OpenXR runtime (made and tested with SteamVR; others should work).
+- Your VR runtime's motion smoothing off for this game (SteamVR Motion Smoothing, Meta ASW, Virtual Desktop SSW, Pimax
+  Smart Smoothing): the mod's frame warp already makes the in-between images, and the two fight each other.
+- The game's Motion Blur off (Display settings): the camera switches eyes every frame, which the game blurs as
+  movement -- near objects, Lara in third person especially, smear. The mod switches it off at start; check it if
+  Lara looks blurred.
 - An NVIDIA RTX graphics card for DLSS -- or, experimentally, an AMD or Intel card: on a PC without an RTX card Setup
   offers to install OptiScaler (github.com/optiscaler/OptiScaler), which runs AMD's FSR 3.1 behind the game's DLSS.
   Turn DLSS on in the game's display settings afterwards. Foveated rendering needs NVIDIA's DLSS and is off with it.
@@ -71,6 +76,8 @@ Problems?
 Source, updates and support
 ---------------------------
 Source and releases: https://github.com/jcooray/Shadow-of-the-Tomb-Raider-VR
+Once per start the mod asks GitHub for its latest release and, when there's a newer one, says so in the overlay (with
+what's new). Nothing else is sent, and nothing is downloaded. Switch it off in the overlay: Support > Check for updates.
 Support development (voluntary): https://ko-fi.com/hadeanvr -- thank you!
 
 Shadow of the Tomb Raider is a trademark of Square Enix. This mod is not affiliated with or endorsed by Square Enix,
