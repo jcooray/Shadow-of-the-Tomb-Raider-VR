@@ -13,14 +13,15 @@ namespace vrmod {
 
 // ui_probe hooks (render threads):
 void HudLayerSeeUiDraw(ID3D12Resource* gameLayer);                                  // a UI-pipeline draw into an sRGB target
-bool HudLayerRedirect(const void* resource, D3D12_CPU_DESCRIPTOR_HANDLE* ourRtv);   // bind / clear of the game's layer -> ours?
+bool HudLayerRedirect(const void* resource, D3D12_CPU_DESCRIPTOR_HANDLE* ourRtv, bool clear = false);   // bind / clear of the game's layer -> ours?
 // World icons (item / collectible markers): Scaleform drawn into the full-resolution HDR scene, depth-tested -- warped by
 // AFW with the depth behind them. ui_probe draws them into our layer instead (cloned pipelines); true + our RTV if active.
 bool HudLayerWorldRtv(D3D12_CPU_DESCRIPTOR_HANDLE* ourRtv);
 // Present path (openxr_integration.cpp), after both eye images are written, eyes in RENDER_TARGET state. Null eyes skipped.
 // renderedEye: the eye this game frame was rendered for (AER: the game camera sits at that eye, and the game places
 // world-anchored icons with it), -1 = both (mono). Each eye gets the HUD of the last frame rendered for it.
-void HudLayerComposite(ID3D12GraphicsCommandList* cl, ID3D12Resource* const eyes[2], int renderedEye);
+// eyeW x eyeH: the eye image's sub-rectangle (top-left) of the swapchain image, which can be larger (its capacity).
+void HudLayerComposite(ID3D12GraphicsCommandList* cl, ID3D12Resource* const eyes[2], int renderedEye, UINT eyeW, UINT eyeH);
 bool HudLayerEnabled();
 void HudLayerSetEnabled(bool on);   // in-headset overlay
 void HudLayerOnPresent();   // Ctrl+Alt+L cycle (on / on red-tinted test / off), 30 s log line

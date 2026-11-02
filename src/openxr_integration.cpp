@@ -1269,7 +1269,7 @@ bool CopyBackbufferToEyes12(ID3D12Resource* backbuffer, int eyeMask = 3) {
 
         // HUD layer (hud_layer.cpp): the game's HUD, kept out of the backbuffer, over each eye -- after the warp, so it
         // isn't moved with the scene depth under it.
-        HudLayerComposite(g_cmdList, dst, g_afwReq ? g_afwEye : (eyeMask == 1 ? 0 : eyeMask == 2 ? 1 : -1));
+        HudLayerComposite(g_cmdList, dst, g_afwReq ? g_afwEye : (eyeMask == 1 ? 0 : eyeMask == 2 ? 1 : -1), g_eyeWidth, g_eyeHeight);
 
         // Ghost test (Ctrl+G): the view flips +-60 degrees up to 72 times a second, so the headset gets black images
         // instead. The test reads the backbuffer, which this doesn't touch.

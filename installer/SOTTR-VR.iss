@@ -19,6 +19,12 @@
   #define AppVersion "1.1.1"
 #endif
 #define AppUrl "https://github.com/jcooray/Shadow-of-the-Tomb-Raider-VR"
+; Windows' version resource takes numbers only: a test build's "1.1.1-hudtest1" gives 1.1.1 there.
+#if Pos("-", AppVersion) > 0
+  #define VersionNumbers Copy(AppVersion, 1, Pos("-", AppVersion) - 1)
+#else
+  #define VersionNumbers AppVersion
+#endif
 
 [Setup]
 AppId={{6E4C2B1F-8D3A-4F5E-9B27-4C1A9E6D3F80}
@@ -55,7 +61,7 @@ WizardSizePercent=130
 ArchiveExtraction=full
 UninstallDisplayName={#AppName}
 UninstallFilesDir={app}\SOTTR-VR\uninstall
-VersionInfoVersion={#AppVersion}
+VersionInfoVersion={#VersionNumbers}
 VersionInfoProductName={#AppName}
 VersionInfoDescription={#AppName} installer
 

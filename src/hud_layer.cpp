@@ -82,7 +82,9 @@ bool g_pipelineFailed = false;
 
 std::atomic<double> g_compositeAliveMs{ 0.0 };   // the Present path asked to composite recently (else don't take the HUD)
 std::atomic<bool> g_redirected{ false };          // a redirect happened since the last composite
-std::atomic<uint64_t> g_statRedirects{ 0 }, g_statComposites{ 0 }, g_statSkipped{ 0 }, g_statWorld{ 0 };
+std::atomic<uint64_t> g_statRedirects{ 0 }, g_statComposites{ 0 }, g_statSkipped{ 0 }, g_statWorld{ 0 }, g_statClears{ 0 };
+std::atomic<uint64_t> g_statNoClear{ 0 };   // composites with no clear of the layer since the last one (the HUD piles up)
+std::atomic<bool> g_cleared{ false };       // a redirected clear since the last composite
 
 void LoadOnce() {
     if (g_loaded.exchange(true)) return;
@@ -277,14 +279,19 @@ void HudLayerSeeUiDraw(ID3D12Resource* layer) {
     g_gameLayer.store(layer);
 }
 
-bool HudLayerRedirect(const void* res, D3D12_CPU_DESCRIPTOR_HANDLE* ours) {
+bool HudLayerRedirect(const void* res, D3D12_CPU_DESCRIPTOR_HANDLE* ours, bool clear) {
     if (!res || res != g_gameLayer.load(std::memory_order_relaxed) || !g_on.load(std::memory_order_relaxed)) return false;
     if (MenuScreenActive() || NowMs() - g_compositeAliveMs.load(std::memory_order_relaxed) > 500.0) return false;
     const uint64_t rtv = g_ourRtv.load(std::memory_order_relaxed);
     if (!rtv) return false;
     ours->ptr = static_cast<SIZE_T>(rtv);
     g_redirected.store(true, std::memory_order_relaxed);
-    g_statRedirects.fetch_add(1, std::memory_order_relaxed);
+    if (clear) {
+        g_cleared.store(true, std::memory_order_relaxed);
+        g_statClears.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        g_statRedirects.fetch_add(1, std::memory_order_relaxed);
+    }
     return true;
 }
 
@@ -299,11 +306,12 @@ bool HudLayerWorldRtv(D3D12_CPU_DESCRIPTOR_HANDLE* ours) {
     return true;
 }
 
-void HudLayerComposite(ID3D12GraphicsCommandList* cl, ID3D12Resource* const eyes[2], int renderedEye) {
+void HudLayerComposite(ID3D12GraphicsCommandList* cl, ID3D12Resource* const eyes[2], int renderedEye, UINT eyeW, UINT eyeH) {
     LoadOnce();
     if (!g_on.load(std::memory_order_relaxed)) return;
     g_compositeAliveMs.store(NowMs(), std::memory_order_relaxed);
     if (!g_redirected.exchange(false, std::memory_order_relaxed) || !g_tex || !g_store[0] || !Pipeline()) return;
+    if (!g_cleared.exchange(false, std::memory_order_relaxed)) g_statNoClear.fetch_add(1, std::memory_order_relaxed);
     auto barrier = [&](ID3D12Resource* r, D3D12_RESOURCE_STATES a, D3D12_RESOURCE_STATES z, D3D12_RESOURCE_BARRIER& x) {
         x = {};
         x.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -340,9 +348,21 @@ void HudLayerComposite(ID3D12GraphicsCommandList* cl, ID3D12Resource* const eyes
         ID3D12PipelineState* pso = nullptr;
         uint32_t mode = 0;
         if (!EyeTarget(eyes[e], &rtv, &pso, &mode)) { g_statSkipped.fetch_add(1, std::memory_order_relaxed); continue; }
+        // Only the eye image's sub-rectangle: the swapchain image can be larger (its capacity is at least 4320 tall), and
+        // until 1.1.2 the HUD was stretched over all of it -- on headsets below that size most of the HUD, the crosshair
+        // included, landed outside the part the headset shows (kvin, Pico 4: no crosshair; Genf; a Quest 3 on Reddit).
         const D3D12_RESOURCE_DESC d = eyes[e]->GetDesc();
-        const D3D12_VIEWPORT vp{ 0.0f, 0.0f, static_cast<float>(d.Width), static_cast<float>(d.Height), 0.0f, 1.0f };
-        const D3D12_RECT sc{ 0, 0, static_cast<LONG>(d.Width), static_cast<LONG>(d.Height) };
+        const UINT w = eyeW && eyeW < d.Width ? eyeW : static_cast<UINT>(d.Width);
+        const UINT h = eyeH && eyeH < d.Height ? eyeH : d.Height;
+        static bool logged = false;
+        if (!logged) {
+            logged = true;
+            modlog::Line("HUDLAYER: added over " + std::to_string(w) + "x" + std::to_string(h) + " of each "
+                + std::to_string(d.Width) + "x" + std::to_string(d.Height) + " swapchain image (our layer "
+                + std::to_string(g_tex->GetDesc().Width) + "x" + std::to_string(g_tex->GetDesc().Height) + ")");
+        }
+        const D3D12_VIEWPORT vp{ 0.0f, 0.0f, static_cast<float>(w), static_cast<float>(h), 0.0f, 1.0f };
+        const D3D12_RECT sc{ 0, 0, static_cast<LONG>(w), static_cast<LONG>(h) };
         const uint32_t consts[4] = { mode, 0, g_tint.load(std::memory_order_relaxed) ? 1u : 0u, 0 };   // [1]: horizontal shift (HUD depth, later)
         cl->SetPipelineState(pso);
         cl->SetGraphicsRoot32BitConstants(0, 4, consts, 0);
@@ -389,6 +409,7 @@ void HudLayerOnPresent() {
         const uint64_t r = g_statRedirects.exchange(0), c = g_statComposites.exchange(0), s = g_statSkipped.exchange(0);
         if (r || c || s || g_on.load()) {
             modlog::Line("HUDLAYER (30 s, " + std::string(g_on.load() ? "on" : "off") + "): " + std::to_string(r) + " HUD binds redirected, "
+                + std::to_string(g_statClears.exchange(0)) + " clears, " + std::to_string(g_statNoClear.exchange(0)) + " frames without a clear, "
                 + std::to_string(g_statWorld.exchange(0)) + " world-icon draws moved into the layer, "
                 + std::to_string(c) + " eye composites (frames rendered for left " + std::to_string(g_statEye[0].exchange(0)) + ", right "
                 + std::to_string(g_statEye[1].exchange(0)) + ", both " + std::to_string(g_statEye[2].exchange(0)) + ")" + (s ? ", " + std::to_string(s) + " eyes skipped (eye image format not RGBA8)" : "")

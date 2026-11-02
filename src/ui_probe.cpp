@@ -518,7 +518,7 @@ void STDMETHODCALLTYPE hkClearRTV(ID3D12GraphicsCommandList* cl, D3D12_CPU_DESCR
         if (it != g_rtv.end()) res = it->second.res;
     }
     D3D12_CPU_DESCRIPTOR_HANDLE ours{};
-    if (res && HudLayerRedirect(res, &ours)) oClearRTV(cl, ours, color, n, r);
+    if (res && HudLayerRedirect(res, &ours, true)) oClearRTV(cl, ours, color, n, r);
 }
 
 std::string EventName(UINT meta, const void* data, UINT size) {
