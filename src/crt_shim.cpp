@@ -27,6 +27,13 @@
 // So: where the process runs on a msvcp140.dll older than 14.40 and the machine has a newer one in System32, that one
 // is loaded as well (by its full path: a second module) and every _Mtx_* and _Cnd_* function of the old one is sent
 // to the newer one's. Before the OpenXR instance is made. [debug] crt_shim=0 leaves the runtime alone.
+//
+// All of them at once (2026-11-22, 1.1.3): they were redirected one after another, each with the other threads stopped
+// and started again, and for those few milliseconds the process ran on a mixture -- a mutex the game made then was
+// initialised by the newer runtime (_Mtx_init_in_situ, redirected already: no table pointer) and unlocked by the old
+// one (_Mtx_unlock, the last name in the list, not yet redirected), which died reading address 0x18 at
+// MSVCP140.dll+0x12f55. Two starts in a row closed to the desktop that way. The redirections are now queued and applied
+// in one step, the other threads stopped once: no thread ever sees some of them without the others.
 namespace vrmod {
 namespace {
 
@@ -98,8 +105,12 @@ void CrtMutexShim() {
         void* oldFn = const_cast<BYTE*>(base) + rva;
         void* newFn = reinterpret_cast<void*>(GetProcAddress(newMod, name));
         if (!newFn) { ++missing; continue; }
-        if (MH_CreateHook(oldFn, newFn, nullptr) == MH_OK && MH_EnableHook(oldFn) == MH_OK) ++sent;
+        if (MH_CreateHook(oldFn, newFn, nullptr) == MH_OK && MH_QueueEnableHook(oldFn) == MH_OK) ++sent;
         else ++failed;
+    }
+    if (sent && MH_ApplyQueued() != MH_OK) {   // (all of them in one step: see the note above)
+        failed += sent;
+        sent = 0;
     }
     snprintf(line, sizeof(line), "CRT: the process runs on the game's own msvcp140.dll %u.%u (%s), too old for OpenXR software built with a newer Visual "
              "Studio (it crashes reading address 0 in MSVCP140.dll). The machine's %u.%u is loaded beside it and %d of the old one's mutex and condition "

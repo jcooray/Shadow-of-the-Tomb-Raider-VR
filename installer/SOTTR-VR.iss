@@ -16,7 +16,7 @@
 
 #define AppName "Shadow of the Tomb Raider VR"
 #ifndef AppVersion
-  #define AppVersion "1.1.2"
+  #define AppVersion "1.1.3"
 #endif
 #define AppUrl "https://github.com/jcooray/Shadow-of-the-Tomb-Raider-VR"
 ; Windows' version resource takes numbers only: a test build's "1.1.1-hudtest1" gives 1.1.1 there.

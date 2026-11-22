@@ -48,6 +48,35 @@ int Guarded(MtxFn fn, void* m) {   // 0 fine, 1 the function reported an error, 
         return 2;
     }
 }
+
+// Threads that go on making, locking, unlocking and destroying mutexes through the old runtime's exports while the
+// shim is applied, as the game's own threads do (2026-11-22: redirected one function after another, a mutex initialised
+// by the newer runtime met the old _Mtx_unlock and the game died at MSVCP140.dll+0x12f55).
+MtxInit g_hInit = nullptr;
+MtxFn g_hLock = nullptr, g_hUnlock = nullptr;
+MtxVoid g_hDestroy = nullptr;
+volatile LONG g_hStop = 0, g_hFaults = 0, g_hLoops = 0;
+
+int HammerOnce() {
+    alignas(8) unsigned char m[80];
+    __try {
+        g_hInit(m, 2);
+        g_hLock(m);
+        g_hUnlock(m);
+        g_hDestroy(m);
+        return 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 1;
+    }
+}
+
+DWORD WINAPI Hammer(void*) {
+    while (!g_hStop) {
+        if (HammerOnce()) InterlockedIncrement(&g_hFaults);
+        InterlockedIncrement(&g_hLoops);
+    }
+    return 0;
+}
 }  // namespace
 
 int wmain(int argc, wchar_t** argv) {
@@ -71,7 +100,20 @@ int wmain(int argc, wchar_t** argv) {
     Check(Guarded(lock, oldStyle) == 0, "before the shim: the old runtime locks a mutex it initialised itself");
 
     MH_Initialize();
+    g_hInit = init;
+    g_hLock = lock;
+    g_hUnlock = unlock;
+    g_hDestroy = destroy;
+    HANDLE hammers[6];
+    for (HANDLE& h : hammers) h = CreateThread(nullptr, 0, Hammer, nullptr, 0, nullptr);
+    Sleep(50);
     vrmod::CrtMutexShim();
+    Sleep(50);
+    InterlockedExchange(&g_hStop, 1);
+    WaitForMultipleObjects(6, hammers, TRUE, 5000);
+    for (HANDLE h : hammers) CloseHandle(h);
+    printf("      (%ld mutexes made, locked, unlocked and destroyed by six threads meanwhile; %ld faults)\n", g_hLoops, g_hFaults);
+    Check(g_hFaults == 0, "while the shim is applied: threads making and using mutexes never fault");
 
     Check(Guarded(unlock, oldStyle) == 0, "after the shim: the mutex the old runtime locked is unlocked through the newer one");
     Check(Guarded(lock, oldStyle) == 0 && Guarded(unlock, oldStyle) == 0, "after the shim: an old-style mutex locks and unlocks");
