@@ -18,7 +18,8 @@ It's free and open source. If you enjoy it, you can [support its development](#s
   controller while you hold the aim trigger: the shot leaves from your hand and the crosshair sits where it will hit,
   while you keep looking wherever you like. With a gamepad, aim where you look (on by default; the stick works too).
 - **The world at life size,** and you can make it bigger or smaller in the overlay.
-- **HUD where you can see it.** The game's HUD is drawn smaller and centred, on its own layer in front of you.
+- **HUD where you can see it.** The game's HUD floats in front of you as a panel of its own, smaller and centred,
+  and the crosshair sits on the spot your aim hits.
 - **DLSS kept working,** at a resolution worked out for your headset. You set it as a percentage in the overlay, like
   SteamVR's own setting.
 - **An overlay in the headset** with all the settings. Hold the Guide (Xbox) button and press Menu. Every change shows

@@ -95,6 +95,12 @@ const LiveDef kLive[] = {
     { "gaze.cheeky_openxr_layer", 0, 0, 1, false, nullptr },
     { "gaze.openvr", 1, 0, 1, false, nullptr },
     { "hud.layer", 1, 0, 1, false, nullptr },
+    // The HUD as a panel of its own in the headset (hud_layer.h, "HUD panel"): 0 = over the eye images as until 1.1.1.
+    { "hud.panel", 1, 0, 1, false, nullptr },
+    { "hud.distance_m", 2.0f, 0.5f, 20.0f, true, nullptr },
+    // The reticle's box (cut out of the panel while aiming and shown at the aim's hit point): its half-size as a share
+    // of the HUD's height.
+    { "hud.reticle_box", 0.09f, 0.03f, 0.25f, true, nullptr },
     { "sound.view_cues", 0, 0, 1, false, nullptr },
     { "aim.head_drive", 1, 0, 1, false, nullptr },
     { "aim.head_aim", 1, 0, 1, false, nullptr },
@@ -124,6 +130,8 @@ const LiveDef kLive[] = {
     { "overlay.width_m", 0.9f, 0.4f, 2.0f, true, nullptr },
     // 1 = the overlay has opened once at World size, with its notice (vr_overlay.cpp FirstWorldSizePrompt).
     { "overlay.world_asked", 0, 0, 1, false, nullptr },
+    { "debug.cheeky_markers", 0, 0, 1, true, nullptr },   // CheekyFoveatedDLSS's own eye matching by markers in the image's corners (cheeky_loader.cpp)
+    { "debug.crt_shim", 1, 0, 1, true, nullptr },   // the game's old msvcp140.dll made safe for newer OpenXR software (crt_shim.cpp)
     // 1 = the VR motion controllers work as a gamepad (motion_input.cpp; docs/MOTION_CONTROLS.md).
     { "motion.controllers", 1, 0, 1, false, nullptr },
     // Stage 2: while aiming, the aim follows this controller instead of the head (off | left | right).
@@ -697,7 +705,10 @@ void SaveSettings(const Settings& s) {
         out << "[hud]\n; the game's UI drawn smaller and centred (Ctrl+Alt+8/9 smaller/larger, Ctrl+Alt+5/6 up/down, Ctrl+Alt+7 on/off)\n"
             << "enabled=" << (h.enabled ? 1 : 0) << "\nscale=" << h.scale << "\noffset_y=" << h.offsetY
             << "\n; layer: 1 = the HUD in its own layer, added over each eye after the AFW warp (Ctrl+Alt+L cycles)\nlayer="
-            << (GetHudLayerSetting() ? 1 : 0) << "\n\n";
+            << (GetHudLayerSetting() ? 1 : 0)
+            << "\n; panel: 1 = the HUD as a panel of its own in the headset, distance_m metres in front of you, with the crosshair\n"
+               "; shown on what you aim at (needs layer=1); 0 = the HUD drawn into each eye's image, as before 1.2\npanel="
+            << (SettingGet("hud.panel") != 0.0f ? 1 : 0) << "\ndistance_m=" << SettingGet("hud.distance_m") << "\n\n";
     }
     out << "[sound]\n; view_cues: 1 = tones when the view switches first/third person and when menus turn head tracking off/on\nview_cues="
         << (GetViewCuesSetting() ? 1 : 0) << "\n\n";

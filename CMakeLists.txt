@@ -120,6 +120,7 @@ add_library(vrmod_dxgi_proxy SHARED
     src/aer.cpp
     src/projection_probe.cpp
     src/logger.cpp
+    src/crt_shim.cpp
     src/overlay_pad.cpp
     src/vr_overlay.cpp
     src/update_check.cpp
@@ -176,3 +177,13 @@ target_link_libraries(vrmod_motion_mapper_test PRIVATE openxr_loader user32)
 
 add_executable(vrmod_gameaddr_test tools/gameaddr_test.cpp src/game_addresses.cpp)
 target_compile_definitions(vrmod_gameaddr_test PRIVATE GAMEADDR_TEST)
+
+# Offline check of src/crt_shim.cpp against the old msvcp140.dll the game ships (tools/crt_shim_test.cpp).
+add_executable(vrmod_crt_shim_test tools/crt_shim_test.cpp src/crt_shim.cpp)
+target_include_directories(vrmod_crt_shim_test PRIVATE src)
+target_link_libraries(vrmod_crt_shim_test PRIVATE minhook)
+
+# Offline check of the HUD panel route in src/hud_layer.cpp on a real D3D12 device (tools/hud_panel_test.cpp).
+add_executable(vrmod_hud_panel_test tools/hud_panel_test.cpp src/hud_layer.cpp)
+target_include_directories(vrmod_hud_panel_test PRIVATE src)
+target_link_libraries(vrmod_hud_panel_test PRIVATE d3d12 dxgi dxguid user32)

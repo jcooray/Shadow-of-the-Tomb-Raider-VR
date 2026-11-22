@@ -9,6 +9,7 @@
 #include <mutex>
 #include <string>
 
+#include "aer.h"
 #include "audio_cue.h"
 #include "camera_interceptor.h"
 #include "logger.h"
@@ -32,7 +33,7 @@ double NowMs() {
 const char kShader[] = R"(
 Texture2D<float4> hud : register(t0);
 SamplerState lin : register(s0);
-cbuffer C : register(b0) { uint mode; float shiftU; uint tint; float pad; };
+cbuffer C : register(b0) { uint mode; float shiftU; uint tint; uint copy; float4 src; float4 hole; };
 struct V { float4 pos : SV_Position; float2 uv : TEXCOORD0; };
 V vs(uint id : SV_VertexID) {
     V o;
@@ -41,7 +42,11 @@ V vs(uint id : SV_VertexID) {
     return o;
 }
 float4 ps(V i) : SV_Target {
-    float4 c = hud.SampleLevel(lin, i.uv + float2(shiftU, 0), 0);
+    // copy (the HUD panel / the reticle): the target shows the source rectangle src (x, y, w, h in the layer's uv), and
+    // nothing inside hole (x0, y0, x1, y1) -- the reticle's box, shown by its own quad.
+    float2 uv = copy != 0 ? src.xy + i.uv * src.zw : i.uv + float2(shiftU, 0);
+    float4 c = hud.SampleLevel(lin, uv, 0);
+    if (copy != 0 && uv.x > hole.x && uv.y > hole.y && uv.x < hole.z && uv.y < hole.w) c = 0;
     if (tint != 0) c.rgb *= float3(1.0, 0.15, 0.15);   // test: our layer shown red
     if (mode == 1) {
         float a = c.a;
@@ -71,18 +76,40 @@ bool g_storeFilled[2] = {};
 std::atomic<uint64_t> g_ourRtv{ 0 };
 ID3D12RootSignature* g_root = nullptr;
 ID3D12DescriptorHeap* g_eyeRtvHeap = nullptr;   // RTVs on the eye images (cached by resource + format)
-constexpr int kEyeRtvMax = 16;
+constexpr int kEyeRtvMax = 48;   // eye images, and the panel's and the reticle's
 struct EyeRtv { ID3D12Resource* res; DXGI_FORMAT fmt; };
 EyeRtv g_eyeRtv[kEyeRtvMax] = {};
 int g_eyeRtvNext = 0;
 UINT g_rtvInc = 0;
 ID3D12PipelineState* g_psoSrgb = nullptr;   // RTV R8G8B8A8_UNORM_SRGB, mode 0
 ID3D12PipelineState* g_psoUnorm = nullptr;  // RTV R8G8B8A8_UNORM, mode 1
+ID3D12PipelineState* g_psoCopySrgb = nullptr;    // the same two without blending: the panel / reticle images are written whole
+ID3D12PipelineState* g_psoCopyUnorm = nullptr;
+
+// HUD panel (hud_layer.h). World icons get a texture of their own (they stay in the eye images, per eye); the stores
+// then hold them instead of the whole HUD.
+ID3D12Resource* g_world = nullptr;
+std::atomic<uint64_t> g_worldRtv{ 0 };
+std::atomic<bool> g_panelFailed{ false };
+std::atomic<bool> g_hudDrawn{ false };     // a HUD draw into the layer since the panel was last updated
+std::atomic<bool> g_worldDrawn{ false };   // a world-icon draw into its texture since the last composite
+std::atomic<uint64_t> g_statPanel{ 0 }, g_statReticle{ 0 }, g_statPanelEmpty{ 0 };
+std::mutex g_reticleMutex;
+struct ReticleRec { uint64_t frame; HudReticle r; };
+ReticleRec g_reticleRing[16] = {};
+int g_reticleNext = 0;
+std::atomic<bool> g_reticleNow{ false };
+
+bool PanelOn() {
+    return g_on.load(std::memory_order_relaxed) && !g_panelFailed.load(std::memory_order_relaxed) && SettingGet("hud.panel") != 0.0f;
+}
 bool g_pipelineFailed = false;
 
 std::atomic<double> g_compositeAliveMs{ 0.0 };   // the Present path asked to composite recently (else don't take the HUD)
 std::atomic<bool> g_redirected{ false };          // a redirect happened since the last composite
-std::atomic<uint64_t> g_statRedirects{ 0 }, g_statComposites{ 0 }, g_statSkipped{ 0 }, g_statWorld{ 0 };
+std::atomic<uint64_t> g_statRedirects{ 0 }, g_statComposites{ 0 }, g_statSkipped{ 0 }, g_statWorld{ 0 }, g_statClears{ 0 };
+std::atomic<uint64_t> g_statNoClear{ 0 };   // composites with no clear of the layer since the last one (the HUD piles up)
+std::atomic<bool> g_cleared{ false };       // a redirected clear since the last composite
 
 void LoadOnce() {
     if (g_loaded.exchange(true)) return;
@@ -107,9 +134,10 @@ bool CreateTexture(ID3D12Resource* layer) {
     D3D12_CLEAR_VALUE cv{};
     cv.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
     if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_RENDER_TARGET, &cv, IID_PPV_ARGS(&g_tex)))) return false;
+    if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_RENDER_TARGET, &cv, IID_PPV_ARGS(&g_world)))) g_world = nullptr;
     D3D12_DESCRIPTOR_HEAP_DESC rh{};
     rh.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-    rh.NumDescriptors = 1;
+    rh.NumDescriptors = 2;
     D3D12_DESCRIPTOR_HEAP_DESC sh{};
     sh.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     sh.NumDescriptors = 3;
@@ -120,6 +148,15 @@ bool CreateTexture(ID3D12Resource* layer) {
     rv.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
     const D3D12_CPU_DESCRIPTOR_HANDLE rtv = g_rtvHeap->GetCPUDescriptorHandleForHeapStart();
     dev->CreateRenderTargetView(g_tex, &rv, rtv);
+    if (g_world) {
+        D3D12_CPU_DESCRIPTOR_HANDLE w = rtv;
+        w.ptr += dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+        dev->CreateRenderTargetView(g_world, &rv, w);
+        g_worldRtv.store(w.ptr);
+    } else {
+        modlog::Line("HUDLAYER: no texture for the world icons -- the HUD stays in the eye images (no panel).");
+        g_panelFailed.store(true);
+    }
     D3D12_SHADER_RESOURCE_VIEW_DESC sv{};
     sv.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
     sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
@@ -140,13 +177,13 @@ bool CreateTexture(ID3D12Resource* layer) {
     return true;
 }
 
-ID3D12PipelineState* MakePso(ID3D12Device* dev, ID3DBlob* vs, ID3DBlob* ps, DXGI_FORMAT rtv) {
+ID3D12PipelineState* MakePso(ID3D12Device* dev, ID3DBlob* vs, ID3DBlob* ps, DXGI_FORMAT rtv, bool blend = true) {
     D3D12_GRAPHICS_PIPELINE_STATE_DESC p{};
     p.pRootSignature = g_root;
     p.VS = { vs->GetBufferPointer(), vs->GetBufferSize() };
     p.PS = { ps->GetBufferPointer(), ps->GetBufferSize() };
     D3D12_RENDER_TARGET_BLEND_DESC& b = p.BlendState.RenderTarget[0];
-    b.BlendEnable = TRUE;
+    b.BlendEnable = blend ? TRUE : FALSE;
     b.SrcBlend = D3D12_BLEND_ONE;
     b.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
     b.BlendOp = D3D12_BLEND_OP_ADD;
@@ -169,7 +206,7 @@ ID3D12PipelineState* MakePso(ID3D12Device* dev, ID3DBlob* vs, ID3DBlob* ps, DXGI
 }
 
 bool Pipeline() {
-    if (g_psoSrgb && g_psoUnorm) return true;
+    if (g_psoSrgb && g_psoUnorm && g_psoCopySrgb && g_psoCopyUnorm) return true;
     if (g_pipelineFailed || !g_dev) return false;
     g_pipelineFailed = true;
     using Compile_t = HRESULT(WINAPI*)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO*, ID3DInclude*, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob**, ID3DBlob**);
@@ -189,7 +226,7 @@ bool Pipeline() {
     range.NumDescriptors = 1;
     D3D12_ROOT_PARAMETER params[2] = {};
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    params[0].Constants.Num32BitValues = 4;
+    params[0].Constants.Num32BitValues = 12;
     params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     params[1].DescriptorTable.NumDescriptorRanges = 1;
@@ -217,12 +254,14 @@ bool Pipeline() {
     rsBlob->Release();
     g_psoSrgb = MakePso(g_dev, vs, ps, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB);
     g_psoUnorm = MakePso(g_dev, vs, ps, DXGI_FORMAT_R8G8B8A8_UNORM);
+    g_psoCopySrgb = MakePso(g_dev, vs, ps, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, false);
+    g_psoCopyUnorm = MakePso(g_dev, vs, ps, DXGI_FORMAT_R8G8B8A8_UNORM, false);
     vs->Release();
     ps->Release();
     D3D12_DESCRIPTOR_HEAP_DESC hd{};
     hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
     hd.NumDescriptors = kEyeRtvMax;
-    if (!g_psoSrgb || !g_psoUnorm || FAILED(g_dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&g_eyeRtvHeap)))) {
+    if (!g_psoSrgb || !g_psoUnorm || !g_psoCopySrgb || !g_psoCopyUnorm || FAILED(g_dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&g_eyeRtvHeap)))) {
         modlog::Line("HUDLAYER: pipeline failed -- off.");
         return false;
     }
@@ -232,11 +271,11 @@ bool Pipeline() {
 }
 
 // The eye image's RTV and which pipeline: an sRGB view when the image's format allows one (typeless or sRGB), else UNORM.
-bool EyeTarget(ID3D12Resource* eye, D3D12_CPU_DESCRIPTOR_HANDLE* rtv, ID3D12PipelineState** pso, uint32_t* mode) {
+bool EyeTarget(ID3D12Resource* eye, D3D12_CPU_DESCRIPTOR_HANDLE* rtv, ID3D12PipelineState** pso, uint32_t* mode, bool copy = false) {
     const DXGI_FORMAT f = eye->GetDesc().Format;
     DXGI_FORMAT view;
-    if (f == DXGI_FORMAT_R8G8B8A8_TYPELESS || f == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) { view = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB; *pso = g_psoSrgb; *mode = 0; }
-    else if (f == DXGI_FORMAT_R8G8B8A8_UNORM) { view = DXGI_FORMAT_R8G8B8A8_UNORM; *pso = g_psoUnorm; *mode = 1; }
+    if (f == DXGI_FORMAT_R8G8B8A8_TYPELESS || f == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) { view = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB; *pso = copy ? g_psoCopySrgb : g_psoSrgb; *mode = 0; }
+    else if (f == DXGI_FORMAT_R8G8B8A8_UNORM) { view = DXGI_FORMAT_R8G8B8A8_UNORM; *pso = copy ? g_psoCopyUnorm : g_psoUnorm; *mode = 1; }
     else return false;
     int slot = -1;
     for (int i = 0; i < kEyeRtvMax; ++i) if (g_eyeRtv[i].res == eye && g_eyeRtv[i].fmt == view) slot = i;
@@ -261,6 +300,7 @@ bool EyeTarget(ID3D12Resource* eye, D3D12_CPU_DESCRIPTOR_HANDLE* rtv, ID3D12Pipe
 
 void HudLayerSeeUiDraw(ID3D12Resource* layer) {
     LoadOnce();
+    if (layer && g_gameLayer.load(std::memory_order_relaxed) == layer) g_hudDrawn.store(true, std::memory_order_relaxed);
     if (!layer || !g_on.load(std::memory_order_relaxed) || g_gameLayer.load(std::memory_order_relaxed) == layer) return;
     if (MenuScreenActive()) return;   // learn from gameplay HUD only
     std::lock_guard<std::mutex> lock(g_mutex);
@@ -277,33 +317,133 @@ void HudLayerSeeUiDraw(ID3D12Resource* layer) {
     g_gameLayer.store(layer);
 }
 
-bool HudLayerRedirect(const void* res, D3D12_CPU_DESCRIPTOR_HANDLE* ours) {
+bool HudLayerRedirect(const void* res, D3D12_CPU_DESCRIPTOR_HANDLE* ours, bool clear) {
     if (!res || res != g_gameLayer.load(std::memory_order_relaxed) || !g_on.load(std::memory_order_relaxed)) return false;
     if (MenuScreenActive() || NowMs() - g_compositeAliveMs.load(std::memory_order_relaxed) > 500.0) return false;
     const uint64_t rtv = g_ourRtv.load(std::memory_order_relaxed);
     if (!rtv) return false;
     ours->ptr = static_cast<SIZE_T>(rtv);
     g_redirected.store(true, std::memory_order_relaxed);
-    g_statRedirects.fetch_add(1, std::memory_order_relaxed);
+    if (clear) {
+        g_cleared.store(true, std::memory_order_relaxed);
+        g_statClears.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        g_statRedirects.fetch_add(1, std::memory_order_relaxed);
+    }
     return true;
 }
 
 bool HudLayerWorldRtv(D3D12_CPU_DESCRIPTOR_HANDLE* ours) {
     if (!g_on.load(std::memory_order_relaxed) || !g_gameLayer.load(std::memory_order_relaxed)) return false;
     if (MenuScreenActive() || NowMs() - g_compositeAliveMs.load(std::memory_order_relaxed) > 500.0) return false;
-    const uint64_t rtv = g_ourRtv.load(std::memory_order_relaxed);
+    const uint64_t world = PanelOn() ? g_worldRtv.load(std::memory_order_relaxed) : 0;
+    const uint64_t rtv = world ? world : g_ourRtv.load(std::memory_order_relaxed);
     if (!rtv) return false;
     ours->ptr = static_cast<SIZE_T>(rtv);
     g_redirected.store(true, std::memory_order_relaxed);
+    if (world) g_worldDrawn.store(true, std::memory_order_relaxed);
     g_statWorld.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
-void HudLayerComposite(ID3D12GraphicsCommandList* cl, ID3D12Resource* const eyes[2], int renderedEye) {
+bool HudLayerWorldClear(const void* res, D3D12_CPU_DESCRIPTOR_HANDLE* worldRtv) {
+    if (!res || res != g_gameLayer.load(std::memory_order_relaxed)) return false;
+    const uint64_t rtv = g_worldRtv.load(std::memory_order_relaxed);
+    if (!rtv) return false;
+    worldRtv->ptr = static_cast<SIZE_T>(rtv);
+    return true;
+}
+
+bool HudLayerPanelWanted() {
+    LoadOnce();
+    return PanelOn();
+}
+
+void HudLayerPanelFailed(const char* why) {
+    if (g_panelFailed.exchange(true)) return;
+    modlog::Line(std::string("HUDLAYER: no HUD panel -- ") + why + "; the HUD goes over the eye images as before.");
+}
+
+void HudLayerPanelShape(float* scale, float* offsetDown, float* reticleHalf) {
+    bool on = false;
+    float s = 1.0f, o = 0.0f;
+    if (!UiProbeHudGet(&on, &s, &o) || !on) { s = 1.0f; o = 0.0f; }
+    *scale = s;
+    *offsetDown = o;
+    *reticleHalf = SettingGet("hud.reticle_box") * s;
+}
+
+bool HudLayerPanelPixels(uint32_t* panelW, uint32_t* panelH, uint32_t* reticle) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (!g_tex) return false;
+    const D3D12_RESOURCE_DESC d = g_tex->GetDesc();
+    float s, o, rh;
+    HudLayerPanelShape(&s, &o, &rh);
+    // The HUD's own pixels (the layer's, scaled), at most 2560 wide: about what a headset shows over the panel's angle.
+    uint32_t w = static_cast<uint32_t>(static_cast<float>(d.Width) * s);
+    if (w > 2560) w = 2560;
+    if (w < 640) w = 640;
+    w &= ~1u;
+    uint32_t h = static_cast<uint32_t>(static_cast<float>(w) * static_cast<float>(d.Height) / static_cast<float>(d.Width)) & ~1u;
+    uint32_t r = static_cast<uint32_t>(2.0f * rh * static_cast<float>(d.Height)) & ~7u;
+    if (r > 768) r = 768;
+    if (r < 128) r = 128;
+    *panelW = w;
+    *panelH = h;
+    *reticle = r;
+    return true;
+}
+
+void HudLayerSetReticle(uint64_t gameFrame, bool on, const float local[3], bool hasDistance, bool fromCentre) {
+    g_reticleNow.store(on, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lock(g_reticleMutex);
+    const int last = (g_reticleNext + 15) % 16;
+    const bool again = g_reticleRing[last].frame == gameFrame;   // the frame's second camera write: the same record
+    ReticleRec& rec = g_reticleRing[again ? last : g_reticleNext];
+    if (!again) g_reticleNext = (g_reticleNext + 1) % 16;
+    rec.frame = gameFrame;
+    rec.r.on = on;
+    rec.r.local[0] = local ? local[0] : 0.0f;
+    rec.r.local[1] = local ? local[1] : 1.0f;
+    rec.r.local[2] = local ? local[2] : 0.0f;
+    rec.r.hasDistance = hasDistance;
+    rec.r.fromCentre = fromCentre;
+}
+
+bool HudLayerReticleFor(uint64_t gameFrame, HudReticle* out) {
+    std::lock_guard<std::mutex> lock(g_reticleMutex);
+    for (const ReticleRec& rec : g_reticleRing) {
+        if (rec.frame == gameFrame && gameFrame != 0) { *out = rec.r; return true; }
+    }
+    return false;
+}
+
+HudPanelPlan HudLayerPanelPlan(int renderedEye, bool allow, bool allowReticle) {
+    LoadOnce();
+    HudPanelPlan p;
+    if (!allow || !PanelOn() || !g_tex || !g_world) { p.empty = true; return p; }   // not this frame: the eye images, as before
+    p.active = true;
+    if (!g_redirected.load(std::memory_order_relaxed)) { p.empty = true; return p; }   // a menu, a loading screen: no HUD of ours
+    // One HUD for both eyes: the left eye's frames' (the game places prompts on things with the frame's camera, and
+    // the two eyes' alternating would show them twice). The right eye's frames leave the panel as it is.
+    if (renderedEye > 0) return p;
+    if (!g_hudDrawn.exchange(false, std::memory_order_relaxed)) {
+        p.empty = true;
+        g_statPanelEmpty.fetch_add(1, std::memory_order_relaxed);
+        return p;
+    }
+    p.panel = true;
+    p.reticle = allowReticle && g_reticleNow.load(std::memory_order_relaxed);
+    return p;
+}
+
+void HudLayerComposite(ID3D12GraphicsCommandList* cl, ID3D12Resource* const eyes[2], int renderedEye, UINT eyeW, UINT eyeH,
+                       HudPanelTargets* panel) {
     LoadOnce();
     if (!g_on.load(std::memory_order_relaxed)) return;
     g_compositeAliveMs.store(NowMs(), std::memory_order_relaxed);
     if (!g_redirected.exchange(false, std::memory_order_relaxed) || !g_tex || !g_store[0] || !Pipeline()) return;
+    if (!g_cleared.exchange(false, std::memory_order_relaxed)) g_statNoClear.fetch_add(1, std::memory_order_relaxed);
     auto barrier = [&](ID3D12Resource* r, D3D12_RESOURCE_STATES a, D3D12_RESOURCE_STATES z, D3D12_RESOURCE_BARRIER& x) {
         x = {};
         x.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -312,25 +452,34 @@ void HudLayerComposite(ID3D12GraphicsCommandList* cl, ID3D12Resource* const eyes
         x.Transition.StateBefore = a;
         x.Transition.StateAfter = z;
     };
-    // This frame's HUD -> the store of the eye it was rendered for (both when mono).
-    D3D12_RESOURCE_BARRIER bs[3];
-    int nb = 0;
-    barrier(g_tex, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE, bs[nb++]);
-    for (int e = 0; e < 2; ++e) if (renderedEye < 0 || renderedEye == e) barrier(g_store[e], D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST, bs[nb++]);
-    cl->ResourceBarrier(nb, bs);
-    for (int e = 0; e < 2; ++e) {
-        if (renderedEye >= 0 && renderedEye != e) continue;
-        cl->CopyResource(g_store[e], g_tex);
-        g_storeFilled[e] = true;
+    // Into the eye images: the whole HUD (as until 1.1.1), or -- on the panel route -- the world icons only. This frame's
+    // -> the store of the eye it was rendered for (both when mono). On the panel route a frame without a world icon
+    // leaves that eye's store out (nothing to add over the eye).
+    ID3D12Resource* const perEye = panel ? g_world : g_tex;
+    const bool fill = !panel || g_worldDrawn.exchange(false, std::memory_order_relaxed);
+    if (fill) {
+        D3D12_RESOURCE_BARRIER bs[3];
+        int nb = 0;
+        barrier(perEye, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE, bs[nb++]);
+        for (int e = 0; e < 2; ++e) if (renderedEye < 0 || renderedEye == e) barrier(g_store[e], D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST, bs[nb++]);
+        cl->ResourceBarrier(nb, bs);
+        for (int e = 0; e < 2; ++e) {
+            if (renderedEye >= 0 && renderedEye != e) continue;
+            cl->CopyResource(g_store[e], perEye);
+            g_storeFilled[e] = true;
+        }
+        for (int i = 0; i < nb; ++i) std::swap(bs[i].Transition.StateBefore, bs[i].Transition.StateAfter);
+        bs[0].Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;   // ours goes straight back to the game's draws
+        cl->ResourceBarrier(nb, bs);
+    } else {
+        for (int e = 0; e < 2; ++e) if (renderedEye < 0 || renderedEye == e) g_storeFilled[e] = false;
     }
-    for (int i = 0; i < nb; ++i) std::swap(bs[i].Transition.StateBefore, bs[i].Transition.StateAfter);
-    bs[0].Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;   // ours goes straight back to the game's draws
-    cl->ResourceBarrier(nb, bs);
     cl->SetGraphicsRootSignature(g_root);
     cl->SetDescriptorHeaps(1, &g_srvHeap);
     cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     const UINT inc = g_dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     g_statEye[renderedEye < 0 ? 2 : renderedEye].fetch_add(1, std::memory_order_relaxed);
+    const uint32_t tint = g_tint.load(std::memory_order_relaxed) ? 1u : 0u;
     for (int e = 0; e < 2; ++e) {
         if (!eyes[e] || !g_storeFilled[e]) continue;
         D3D12_GPU_DESCRIPTOR_HANDLE srv = g_srvHeap->GetGPUDescriptorHandleForHeapStart();
@@ -340,18 +489,77 @@ void HudLayerComposite(ID3D12GraphicsCommandList* cl, ID3D12Resource* const eyes
         ID3D12PipelineState* pso = nullptr;
         uint32_t mode = 0;
         if (!EyeTarget(eyes[e], &rtv, &pso, &mode)) { g_statSkipped.fetch_add(1, std::memory_order_relaxed); continue; }
+        // Only the eye image's sub-rectangle: the swapchain image can be larger (its capacity is at least 4320 tall), and
+        // until 1.1.2 the HUD was stretched over all of it -- on headsets below that size most of the HUD, the crosshair
+        // included, landed outside the part the headset shows (kvin, Pico 4: no crosshair; Genf; a Quest 3 on Reddit).
         const D3D12_RESOURCE_DESC d = eyes[e]->GetDesc();
-        const D3D12_VIEWPORT vp{ 0.0f, 0.0f, static_cast<float>(d.Width), static_cast<float>(d.Height), 0.0f, 1.0f };
-        const D3D12_RECT sc{ 0, 0, static_cast<LONG>(d.Width), static_cast<LONG>(d.Height) };
-        const uint32_t consts[4] = { mode, 0, g_tint.load(std::memory_order_relaxed) ? 1u : 0u, 0 };   // [1]: horizontal shift (HUD depth, later)
+        const UINT w = eyeW && eyeW < d.Width ? eyeW : static_cast<UINT>(d.Width);
+        const UINT h = eyeH && eyeH < d.Height ? eyeH : d.Height;
+        static bool logged = false;
+        if (!logged) {
+            logged = true;
+            modlog::Line("HUDLAYER: added over " + std::to_string(w) + "x" + std::to_string(h) + " of each "
+                + std::to_string(d.Width) + "x" + std::to_string(d.Height) + " swapchain image (our layer "
+                + std::to_string(g_tex->GetDesc().Width) + "x" + std::to_string(g_tex->GetDesc().Height) + ")"
+                + (panel ? " -- the world icons; the HUD itself is the panel's" : ""));
+        }
+        const D3D12_VIEWPORT vp{ 0.0f, 0.0f, static_cast<float>(w), static_cast<float>(h), 0.0f, 1.0f };
+        const D3D12_RECT sc{ 0, 0, static_cast<LONG>(w), static_cast<LONG>(h) };
+        const uint32_t consts[12] = { mode, 0, tint, 0, 0, 0, 0, 0, 0, 0, 0, 0 };   // [1]: horizontal shift (HUD depth, later)
         cl->SetPipelineState(pso);
-        cl->SetGraphicsRoot32BitConstants(0, 4, consts, 0);
+        cl->SetGraphicsRoot32BitConstants(0, 12, consts, 0);
         cl->RSSetViewports(1, &vp);
         cl->RSSetScissorRects(1, &sc);
         cl->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
         cl->DrawInstanced(3, 1, 0, 0);
         g_statComposites.fetch_add(1, std::memory_order_relaxed);
     }
+    if (!panel || (!panel->panel && !panel->reticle)) return;
+
+    // The panel route: the HUD itself -> the panel's image (its place in the layer: the scaled, centred rectangle the
+    // viewport rewrite draws it into), and the box at its centre -> the reticle's image, left out of the panel then.
+    float s, offDown, rh;
+    HudLayerPanelShape(&s, &offDown, &rh);
+    const D3D12_RESOURCE_DESC ld = g_tex->GetDesc();
+    const float aspect = static_cast<float>(ld.Height) / static_cast<float>(ld.Width);
+    const float cx = 0.5f, cy = 0.5f + offDown;
+    const float box[4] = { cx - rh * aspect, cy - rh, cx + rh * aspect, cy + rh };   // square in pixels
+    D3D12_RESOURCE_BARRIER tb;
+    barrier(g_tex, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, tb);
+    cl->ResourceBarrier(1, &tb);
+    cl->SetGraphicsRootDescriptorTable(1, g_srvHeap->GetGPUDescriptorHandleForHeapStart());   // slot 0: the HUD layer itself
+    auto copy = [&](ID3D12Resource* target, const float src[4], const float hole[4]) {
+        D3D12_CPU_DESCRIPTOR_HANDLE rtv;
+        ID3D12PipelineState* pso = nullptr;
+        uint32_t mode = 0;
+        if (!target || !EyeTarget(target, &rtv, &pso, &mode, true)) return false;
+        const D3D12_RESOURCE_DESC d = target->GetDesc();
+        const D3D12_VIEWPORT vp{ 0.0f, 0.0f, static_cast<float>(d.Width), static_cast<float>(d.Height), 0.0f, 1.0f };
+        const D3D12_RECT sc{ 0, 0, static_cast<LONG>(d.Width), static_cast<LONG>(d.Height) };
+        uint32_t consts[12] = { mode, 0, tint, 1, 0, 0, 0, 0, 0, 0, 0, 0 };
+        memcpy(&consts[4], src, 16);
+        memcpy(&consts[8], hole, 16);
+        cl->SetPipelineState(pso);
+        cl->SetGraphicsRoot32BitConstants(0, 12, consts, 0);
+        cl->RSSetViewports(1, &vp);
+        cl->RSSetScissorRects(1, &sc);
+        cl->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+        cl->DrawInstanced(3, 1, 0, 0);
+        return true;
+    };
+    const float none[4] = { 2.0f, 2.0f, 2.0f, 2.0f };
+    if (panel->reticle) {
+        const float src[4] = { box[0], box[1], box[2] - box[0], box[3] - box[1] };
+        panel->reticleDrawn = copy(panel->reticle, src, none);
+        if (panel->reticleDrawn) g_statReticle.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (panel->panel) {
+        const float src[4] = { cx - 0.5f * s, cy - 0.5f * s, s, s };
+        panel->panelDrawn = copy(panel->panel, src, panel->reticleDrawn ? box : none);
+        if (panel->panelDrawn) g_statPanel.fetch_add(1, std::memory_order_relaxed);
+    }
+    std::swap(tb.Transition.StateBefore, tb.Transition.StateAfter);
+    cl->ResourceBarrier(1, &tb);
 }
 
 bool HudLayerEnabled() {
@@ -389,9 +597,13 @@ void HudLayerOnPresent() {
         const uint64_t r = g_statRedirects.exchange(0), c = g_statComposites.exchange(0), s = g_statSkipped.exchange(0);
         if (r || c || s || g_on.load()) {
             modlog::Line("HUDLAYER (30 s, " + std::string(g_on.load() ? "on" : "off") + "): " + std::to_string(r) + " HUD binds redirected, "
+                + std::to_string(g_statClears.exchange(0)) + " clears, " + std::to_string(g_statNoClear.exchange(0)) + " frames without a clear, "
                 + std::to_string(g_statWorld.exchange(0)) + " world-icon draws moved into the layer, "
                 + std::to_string(c) + " eye composites (frames rendered for left " + std::to_string(g_statEye[0].exchange(0)) + ", right "
                 + std::to_string(g_statEye[1].exchange(0)) + ", both " + std::to_string(g_statEye[2].exchange(0)) + ")" + (s ? ", " + std::to_string(s) + " eyes skipped (eye image format not RGBA8)" : "")
+                + (PanelOn() ? "; panel: " + std::to_string(g_statPanel.exchange(0)) + " updates, " + std::to_string(g_statReticle.exchange(0))
+                       + " with the reticle apart, " + std::to_string(g_statPanelEmpty.exchange(0)) + " frames with no HUD drawn"
+                   : g_panelFailed.load() ? "; panel failed" : "; panel off")
                 + (g_gameLayer.load() ? "" : "; the game's HUD layer not seen yet"));
         }
     }

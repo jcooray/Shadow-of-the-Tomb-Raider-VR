@@ -998,6 +998,10 @@ void BuildPages() {
         }
         p.items.push_back(Toggle("HUD in its own layer", "The HUD is added over each eye after the frame warp, so it doesn't wobble with the scene.",
                                  "hud.layer", [] { return HudLayerEnabled(); }, [](bool on) { HudLayerSetEnabled(on); }));
+        p.items.push_back(Toggle("HUD as a floating panel", "The HUD floats in front of you as a panel of its own, and the crosshair sits on what you aim at. "
+                                 "Off: the HUD is drawn into each eye's picture, as in earlier versions.", "hud.panel"));
+        p.items.push_back(Number("HUD panel distance", "How far in front of you the HUD panel floats.", "hud.distance_m", 0.25f,
+                                 [](float v) { return Fmt("%.2f m", v); }));
         p.items.push_back(Number("Overlay distance", "How far in front of you this panel opens.", "overlay.distance_m", 0.1f,
                                  [](float v) { return Fmt("%.1f m", v); }, [](float) { g_place = true; }));
         p.items.push_back(Number("Overlay size", "How wide this panel is.", "overlay.width_m", 0.05f,

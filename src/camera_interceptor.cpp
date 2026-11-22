@@ -32,6 +32,7 @@
 #include "ui_probe.h"
 #include "cam_state_probe.h"
 #include "head_drive.h"
+#include "hud_layer.h"
 #include "motion_input.h"
 #include "face_track.h"
 #include "facing_probe.h"
@@ -1356,6 +1357,10 @@ extern "C" void ApplyCameraHeadTracking(void* camera) {
     {
         float ox = 0.0f, oy = 0.0f;
         float hd[4], hand[4];
+        // The reticle for the HUD panel (hud_layer.h): where the aim goes from this frame's camera, in its own axes --
+        // the hit point (retDist) or only a direction; retCentre = along the view's centre (head aim).
+        bool retOn = false, retDist = false, retCentre = false;
+        float retLocal[3] = { 0.0f, 1.0f, 0.0f };
         // Hand aim (stage 2): the game aims along the hand, the view follows the head -- the crosshair goes where the
         // hand's direction falls in this frame's view: d_head^-1 * d_hand * forward.
         const bool handAim = haveDelta && aerFov > 0.0f && (vrmod::g_headAim.load(std::memory_order_relaxed) || vrmod::HeadDriveActive())
@@ -1389,9 +1394,12 @@ extern "C" void ApplyCameraHeadTracking(void* camera) {
                     }
                 }
                 (atHit ? vrmod::g_crossAtHit : vrmod::g_crossByDirection).fetch_add(1, std::memory_order_relaxed);
+                retDist = atHit;
             } else {
                 vrmod::QuatRotate(qi, f, v);
             }
+            retOn = true;
+            retLocal[0] = v[0]; retLocal[1] = v[1]; retLocal[2] = v[2];
             float tH = 0.0f, tV = 0.0f;
             vrmod::OpenXRPredictFrustum(aerFov, vrmod::OpenXRFovModel(), &tH, &tV);
             if (v[1] > 0.2f && tH > 0.0f && tV > 0.0f) {
@@ -1401,7 +1409,25 @@ extern "C" void ApplyCameraHeadTracking(void* camera) {
                 oy = oy < -1.0f ? -1.0f : (oy > 1.0f ? 1.0f : oy);
             }
         }
-        vrmod::UiProbeSetAimOffset(ox, oy);
+        if (!retOn && haveDelta && aerFov > 0.0f && vrmod::CameraAimingNow()) {
+            // Head aim: the game aims along this frame's camera, so the reticle is at the view's centre -- at the depth
+            // of what the aim hits when that is known (in front, at least 30 units away).
+            retOn = retCentre = true;
+            float hp[3];
+            if (vrmod::LaraAimHitPoint(hp)) {
+                const float* ep = reinterpret_cast<const float*>(base + vrmod::kPositionOffset);
+                const float dw[3] = { hp[0] - ep[0], hp[1] - ep[1], hp[2] - ep[2] };
+                const float qc[4] = { -quat[0], -quat[1], -quat[2], quat[3] };
+                float dl[3];
+                vrmod::QuatRotate(qc, dw, dl);
+                if (dl[1] > 30.0f) { retLocal[1] = dl[1]; retDist = true; }
+            }
+        }
+        vrmod::HudLayerSetReticle(gameFrame, retOn, retLocal, retDist, retCentre);
+        // The whole HUD shifted to put its centre on the aim -- only while the HUD is in the eye images; as a panel it
+        // stays where it is and the reticle alone goes to the aim.
+        const bool hudPanel = vrmod::HudLayerPanelWanted();
+        vrmod::UiProbeSetAimOffset(hudPanel ? 0.0f : ox, hudPanel ? 0.0f : oy);
     }
     if (vrmod::g_aimSync.load(std::memory_order_relaxed)) vrmod::SyncRecordMatrices(base, gamePose);
     // First person, step 5: the near-plane search writes its candidate again right after the game's write.

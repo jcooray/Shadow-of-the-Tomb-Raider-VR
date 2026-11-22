@@ -248,3 +248,45 @@ warp, and walls still hide them. Our target stays bound for the following icon d
 are re-bound only if a different draw follows in the same pass (logged in the HEADHIDE line). The icons were HDR scene
 values; in the 8-bit layer they clamp to white (a possible look difference on soft edges). Log: `HUDLAYER (30 s)`
 counts world-icon draws moved.
+
+## HUD panel (2026-11-15, test build 1.1.1-ik65): the HUD as a layer of its own in the headset
+
+**Why.** Until now the HUD ended up as pixels in each eye's image (the HUD layer above, added over the eye images). Three
+things followed from that:
+- its place depended on the eye image: its size (1.1.1 stretched it over the whole swapchain image, so on headsets with
+  smaller eye images the crosshair was off the picture -- kvin, Genf, a Quest 3 on Reddit), its field of view and its
+  canting. "The HUD isn't centred / the crosshair is useless" is the most common complaint about the released version;
+- with hand aim the WHOLE HUD was shifted to put its centre -- the crosshair -- on the aim's hit point: the ammo counter,
+  health and messages went with it, off the picture when the gun pointed away from where the head looked (the user,
+  2026-11-15: "the HUD was not clear and off the screen");
+- it was only as sharp as the eye image, and each eye showed the HUD of its own last frame (36 Hz each, shifted
+  differently while the hand moved).
+
+**How (`src/hud_layer.cpp`, `src/openxr_integration.cpp`).**
+- The redirect of the game's HUD draws into our layer is as before. New: world icons (the Scaleform markers drawn into the
+  scene with its depth) go into a second texture of ours; only that one is still added over the eye images, per eye.
+- The HUD itself is copied each frame into a swapchain of its own (the HUD's rectangle of the layer -- the scaled,
+  centred one the viewport rewrite draws into -- at most 2560 wide, RGBA8 sRGB) and submitted as an OpenXR **quad layer**
+  in the VIEW space: fixed to the head, `[hud] distance_m` (2 m) in front, covering the same share of the game's frustum
+  the HUD covered in the eye images (`[hud] scale`, `offset_y`). The runtime places it, so it is in the same place on
+  every headset, and it is sampled at the headset's own resolution. One HUD for both eyes, from the left eye's frames
+  (the game places prompts on things with the frame's camera; alternating eyes would show them twice).
+- **The reticle.** While aiming, a box at the HUD's centre (`[hud] reticle_box`, 0.09 of the HUD's height each way) is
+  cut out of the panel and copied into a second small swapchain, shown as its own quad at the aim's hit point
+  (`LaraAimHitPoint`, taken from the pose that frame's camera was given, in the app space) -- at its real distance, so
+  the two eyes agree on it and it stays on the target as the head moves. Hand aim: the hit point (or the direction, 30 m
+  out, when the game has no point). Head aim: along the view's centre from between the eyes, at the hit's depth. The
+  rest of the HUD stays where it is: `UiProbeSetAimOffset` is 0 on this route.
+- **Fallbacks.** `[hud] panel=0` (overlay: "HUD as a floating panel"), no RGBA8 swapchain format, a swapchain or the VIEW
+  space not created, 30 updates that could not be drawn, or an `xrEndFrame` refused with the panel in it: the HUD goes
+  over the eye images again, as until 1.1.1 (`HUDLAYER: no HUD panel -- ...`). Screen mode keeps the old route too.
+- **Log.** `HUDPANEL: the HUD is a panel of its own (...)` once; `HUDPANEL: panel W x H m at D m (...)` for the first
+  frames and the first with the reticle apart; the `HUDLAYER (30 s)` line ends with the panel's updates.
+- **Offline test** `vrmod_hud_panel_test` (tools/hud_panel_test.cpp, a real D3D12 device): the panel holds the HUD's
+  rectangle with the box left out, the reticle image holds the box, the eyes get the world icons only, and the old route
+  still puts the whole HUD over the eyes. The OpenXR side (swapchains, quads) can only be tested in the headset.
+
+**Known limits.** Prompts the game draws on things (button icons) are part of the same Flash layer: on the panel they
+are where the scaled HUD puts them, as before, and lag the scene slightly in fast head turns (the panel is fixed to the
+head; the scene is reprojected). Anything else the game draws inside the reticle's box while aiming goes with the
+reticle.

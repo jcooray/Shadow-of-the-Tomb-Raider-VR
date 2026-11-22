@@ -32,6 +32,7 @@
 #include "stall_watchdog.h"
 #include "perf_stats.h"
 #include "bmp_writer.h"
+#include "crt_shim.h"
 #include "audio_cue.h"
 #include "desktop_spoof.h"
 #include "gpu_frame_timer.h"
@@ -73,6 +74,7 @@ XrInstance g_instance = XR_NULL_HANDLE;
 XrSystemId g_systemId = XR_NULL_SYSTEM_ID;
 XrSession g_session = XR_NULL_HANDLE;
 XrSpace g_appSpace = XR_NULL_HANDLE;
+XrSpace g_viewSpace = XR_NULL_HANDLE;   // the head's own space: the HUD panel is fixed in it (created with the panel)
 XrSwapchain g_swapchainLeft = XR_NULL_HANDLE;
 XrSwapchain g_swapchainRight = XR_NULL_HANDLE;
 std::vector<XrSwapchainImageD3D11KHR> g_swapchainImagesLeft;
@@ -347,6 +349,7 @@ bool InitOpenXR(ID3D11Device* device, uint32_t eyeW12 = 0, uint32_t eyeH12 = 0) 
     // which can't follow alternate-eye rendering (2026-09-30: fovea stuck in the centre). This mod supplies Cheeky's gaze
     // and eye views itself, so keep the layer out of this process through the variable its manifest names
     // ("disable_environment"); the loader reads it at instance creation. [gaze] cheeky_openxr_layer=1 lets it load.
+    CrtMutexShim();   // (the game's old C++ runtime against newer OpenXR software: crt_shim.cpp)
     if (!GetCheekyOpenXrLayerAllowed()) {
         SetEnvironmentVariableW(L"CHEEKY_OPENXR_LAYER_DISABLE", L"1");
         _putenv_s("CHEEKY_OPENXR_LAYER_DISABLE", "1");
@@ -1186,6 +1189,95 @@ int g_afwEye = 0;
 uint64_t g_afwFrame = 0;
 float g_afwBaselineCm = 0.0f, g_afwTanH = 0.0f, g_afwTanV = 0.0f;
 
+// ---- HUD panel (hud_layer.h): the game's HUD as a quad layer of its own, and the reticle as a second one ----
+// Two small swapchains (8-bit RGBA, sRGB when the runtime offers it), drawn into by HudLayerComposite on the game's queue
+// in the same command list as the eye copies. Created once the game's HUD layer is known; a runtime that can't gives
+// HudLayerPanelFailed and the HUD goes over the eye images as before.
+struct HudChain {
+    XrSwapchain sc = XR_NULL_HANDLE;
+    std::vector<XrSwapchainImageD3D12KHR> images;
+    int w = 0, h = 0;
+    bool acquired = false;
+    bool show = false;   // its latest released image holds this frame's HUD (reticle)
+};
+HudChain g_hudPanel, g_hudReticle;
+
+bool HudChainCreate(HudChain& c, int64_t format, uint32_t w, uint32_t h) {
+    XrSwapchainCreateInfo ci{ XR_TYPE_SWAPCHAIN_CREATE_INFO };
+    ci.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
+    ci.format = format;
+    ci.width = w;
+    ci.height = h;
+    ci.sampleCount = 1;
+    ci.faceCount = 1;
+    ci.arraySize = 1;
+    ci.mipCount = 1;
+    if (!XrCheck(xrCreateSwapchain(g_session, &ci, &c.sc), "xrCreateSwapchain(hud)")) { c.sc = XR_NULL_HANDLE; return false; }
+    uint32_t n = 0;
+    xrEnumerateSwapchainImages(c.sc, 0, &n, nullptr);
+    c.images.assign(n, XrSwapchainImageD3D12KHR{ XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR });
+    xrEnumerateSwapchainImages(c.sc, n, &n, reinterpret_cast<XrSwapchainImageBaseHeader*>(c.images.data()));
+    c.w = static_cast<int>(w);
+    c.h = static_cast<int>(h);
+    return n > 0;
+}
+
+bool HudChainsEnsure() {
+    if (g_hudPanel.sc != XR_NULL_HANDLE && g_hudReticle.sc != XR_NULL_HANDLE) return true;
+    if (!HudLayerPanelWanted()) return false;
+    uint32_t pw = 0, ph = 0, rs = 0;
+    if (!HudLayerPanelPixels(&pw, &ph, &rs)) return false;   // the game's HUD layer hasn't been seen yet
+    auto fail = [](const char* why) {
+        HudLayerPanelFailed(why);
+        return false;
+    };
+    if (!g_useD3D12 || !g_device12) return fail("it needs the game's D3D12 device");
+    if (g_viewSpace == XR_NULL_HANDLE) {
+        XrReferenceSpaceCreateInfo si{ XR_TYPE_REFERENCE_SPACE_CREATE_INFO };
+        si.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
+        si.poseInReferenceSpace.orientation.w = 1.0f;
+        if (!XrCheck(xrCreateReferenceSpace(g_session, &si, &g_viewSpace), "xrCreateReferenceSpace(view)")) {
+            g_viewSpace = XR_NULL_HANDLE;
+            return fail("the runtime gave no head (view) space");
+        }
+    }
+    uint32_t count = 0;
+    xrEnumerateSwapchainFormats(g_session, 0, &count, nullptr);
+    std::vector<int64_t> formats(count);
+    xrEnumerateSwapchainFormats(g_session, count, &count, formats.data());
+    int64_t format = 0;
+    for (int64_t want : { static_cast<int64_t>(DXGI_FORMAT_R8G8B8A8_UNORM_SRGB), static_cast<int64_t>(DXGI_FORMAT_R8G8B8A8_UNORM) }) {
+        for (int64_t f : formats) if (f == want && !format) format = f;
+    }
+    if (!format) return fail("the runtime offers no 8-bit RGBA swapchain format");
+    if (g_hudPanel.sc == XR_NULL_HANDLE && !HudChainCreate(g_hudPanel, format, pw, ph)) return fail("its swapchain could not be created");
+    if (g_hudReticle.sc == XR_NULL_HANDLE && !HudChainCreate(g_hudReticle, format, rs, rs)) return fail("the reticle's swapchain could not be created");
+    modlog::Line("HUDPANEL: the HUD is a panel of its own (" + std::to_string(pw) + " x " + std::to_string(ph) + ", " + std::to_string(g_hudPanel.images.size())
+                 + " images; the reticle " + std::to_string(rs) + " x " + std::to_string(rs) + "; swapchain format " + std::to_string(format)
+                 + ") -- [hud] panel=0 puts it back into the eye images");
+    return true;
+}
+
+ID3D12Resource* HudChainAcquire(HudChain& c) {
+    if (c.sc == XR_NULL_HANDLE || c.acquired) return nullptr;
+    uint32_t idx = 0;
+    XrSwapchainImageAcquireInfo ai{ XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
+    if (!XrCheck(xrAcquireSwapchainImage(c.sc, &ai, &idx), "xrAcquireSwapchainImage(hud)")) return nullptr;
+    c.acquired = true;
+    XrSwapchainImageWaitInfo wi{ XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
+    wi.timeout = XR_INFINITE_DURATION;
+    StallWatchdogSetPhase("xr:xrWaitSwapchainImage(hud)");
+    if (!XrCheck(xrWaitSwapchainImage(c.sc, &wi), "xrWaitSwapchainImage(hud)") || idx >= c.images.size()) return nullptr;
+    return c.images[idx].texture;
+}
+
+void HudChainRelease(HudChain& c) {
+    if (!c.acquired) return;
+    c.acquired = false;
+    XrSwapchainImageReleaseInfo ri{ XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
+    XrCheck(xrReleaseSwapchainImage(c.sc, &ri), "xrReleaseSwapchainImage(hud)");
+}
+
 bool CopyBackbufferToEyes12(ID3D12Resource* backbuffer, int eyeMask = 3) {
     XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
     XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
@@ -1210,6 +1302,13 @@ bool CopyBackbufferToEyes12(ID3D12Resource* backbuffer, int eyeMask = 3) {
     g_xrWaitImage.Add(NowMs() - acquireStart);
 
     if (ok) {
+        // The HUD panel: what this frame's HUD composite will draw, and those images.
+        const int renderedEye = g_afwReq ? g_afwEye : (eyeMask == 1 ? 0 : eyeMask == 2 ? 1 : -1);
+        HudPanelTargets hudTargets;
+        const HudPanelPlan hudPlan = HudLayerPanelPlan(renderedEye, !g_screenMode && HudChainsEnsure(), AerFrames());
+        if (hudPlan.panel) hudTargets.panel = HudChainAcquire(g_hudPanel);
+        if (hudPlan.reticle) hudTargets.reticle = HudChainAcquire(g_hudReticle);
+
         const int a = g_allocatorIndex;
         g_allocatorIndex = (g_allocatorIndex + 1) % kFramesInFlight3;
         if (g_fence->GetCompletedValue() < g_allocatorFence[a]) {
@@ -1269,7 +1368,7 @@ bool CopyBackbufferToEyes12(ID3D12Resource* backbuffer, int eyeMask = 3) {
 
         // HUD layer (hud_layer.cpp): the game's HUD, kept out of the backbuffer, over each eye -- after the warp, so it
         // isn't moved with the scene depth under it.
-        HudLayerComposite(g_cmdList, dst, g_afwReq ? g_afwEye : (eyeMask == 1 ? 0 : eyeMask == 2 ? 1 : -1));
+        HudLayerComposite(g_cmdList, dst, renderedEye, g_eyeWidth, g_eyeHeight, hudPlan.active ? &hudTargets : nullptr);
 
         // Ghost test (Ctrl+G): the view flips +-60 degrees up to 72 times a second, so the headset gets black images
         // instead. The test reads the backbuffer, which this doesn't touch.
@@ -1309,6 +1408,19 @@ bool CopyBackbufferToEyes12(ID3D12Resource* backbuffer, int eyeMask = 3) {
         g_gameQueue->Signal(g_fence, ++g_fenceValue);
         g_allocatorFence[a] = g_fenceValue;
         GpuFrameTimerFrameSubmitted(g_fenceValue, FrameLogCurrentFrame());
+
+        HudChainRelease(g_hudPanel);
+        HudChainRelease(g_hudReticle);
+        if (hudPlan.empty) {
+            g_hudPanel.show = g_hudReticle.show = false;
+        } else if (hudPlan.panel) {
+            g_hudPanel.show = hudTargets.panelDrawn;
+            g_hudReticle.show = hudTargets.reticleDrawn;
+            // A panel that can't be drawn (an image format of the runtime's we have no view for) would be no HUD at all.
+            static int fails = 0;
+            if (hudTargets.panelDrawn) fails = 0;
+            else if (++fails == 30) HudLayerPanelFailed("its image could not be drawn into");
+        }
     }
 
     for (int e = 0; e < 2; ++e) {
@@ -1597,6 +1709,11 @@ void SubmitStereoFrame(ID3D11Texture2D* leftEyeTexture, ID3D11Texture2D* rightEy
     XrCompositionLayerProjection layer{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
     XrCompositionLayerQuad quadLayers[2]{};
     XrCompositionLayerQuad overlayQuad{ XR_TYPE_COMPOSITION_LAYER_QUAD };
+    XrCompositionLayerQuad hudQuad{ XR_TYPE_COMPOSITION_LAYER_QUAD }, hudReticleQuad{ XR_TYPE_COMPOSITION_LAYER_QUAD };
+    bool hudRetHave = false;          // the reticle's place for the frame being shown (the app space)
+    XrPosef hudRetPose{ { 0, 0, 0, 1 }, { 0, 0, -1 } };
+    float hudRetDist = 1.0f;
+    float declTanH = 0.0f, declTanV = 0.0f;   // the frustum the eye images are declared with (the left eye's)
     XrCompositionLayerProjectionView projViews[2]{};
     projViews[0].type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
     projViews[1].type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
@@ -1842,6 +1959,40 @@ void SubmitStereoFrame(ID3D11Texture2D* leftEyeTexture, ID3D11Texture2D* rightEy
                 FrameLogSetEyeTag('M');
             }
 
+            // The reticle of the frame being shown (hud_layer.h): the aim's hit point, from the pose that frame's
+            // camera was given, in the app space -- so it stays on its target as the head moves, like the scene.
+            HudReticle hr{};
+            if ((fallback == kFbNone || honouredMono) && HudLayerReticleFor(ap.gameFrame, &hr) && hr.on) {
+                const float unitsPerM = 100.0f * AerWorldScale();
+                // camera-local game axes (X right, Y forward, Z up) -> the view's (x right, y up, z back)
+                float v[3] = { hr.local[0], hr.local[2], -hr.local[1] };
+                const float len = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+                if (len > 1e-3f && unitsPerM > 0.0f) {
+                    float dist = hr.hasDistance ? len / unitsPerM : 30.0f;
+                    dist = dist < 0.4f ? 0.4f : (dist > 100.0f ? 100.0f : dist);
+                    for (float& c : v) c = c / len * dist;
+                    float q[4] = { ap.pose.q[0], ap.pose.q[1], ap.pose.q[2], ap.pose.q[3] };
+                    float o[3] = { ap.pose.p[0], ap.pose.p[1], ap.pose.p[2] };
+                    if (hr.fromCentre && fallback == kFbNone && !ap.mono) {   // from between the eyes, along their mean direction
+                        const float* b = ap.poseOther.q;
+                        const float sg = (q[0] * b[0] + q[1] * b[1] + q[2] * b[2] + q[3] * b[3]) < 0.0f ? -1.0f : 1.0f;
+                        float n = 0.0f;
+                        for (int i = 0; i < 4; ++i) { q[i] += sg * b[i]; n += q[i] * q[i]; }
+                        n = std::sqrt(n);
+                        for (int i = 0; i < 4; ++i) q[i] = n > 0.0f ? q[i] / n : ap.pose.q[i];
+                        for (int i = 0; i < 3; ++i) o[i] = 0.5f * (ap.pose.p[i] + ap.poseOther.p[i]);
+                    }
+                    // q * v: v + 2 w (u x v) + 2 u x (u x v)
+                    const float cx = q[1] * v[2] - q[2] * v[1], cy = q[2] * v[0] - q[0] * v[2], cz = q[0] * v[1] - q[1] * v[0];
+                    const float dx = q[1] * cz - q[2] * cy, dy = q[2] * cx - q[0] * cz, dz = q[0] * cy - q[1] * cx;
+                    hudRetPose.orientation = { q[0], q[1], q[2], q[3] };
+                    hudRetPose.position = { o[0] + v[0] + 2.0f * (q[3] * cx + dx), o[1] + v[1] + 2.0f * (q[3] * cy + dy),
+                                            o[2] + v[2] + 2.0f * (q[3] * cz + dz) };
+                    hudRetDist = dist;
+                    hudRetHave = true;
+                }
+            }
+
             // Log the fallbacks that matter for Phase 8 (not menus, resyncs or the head-centre pipeline tail).
             const bool significant = fallback == kFbStalled || fallback == kFbForeign || fallback == kFbUnpaired
                 || fallback == kFbCutscene || fallback == kFbForced;
@@ -1954,6 +2105,7 @@ void SubmitStereoFrame(ID3D11Texture2D* leftEyeTexture, ID3D11Texture2D* rightEy
                 halfTanH *= kMenuScreenScale;
                 halfTanV *= kMenuScreenScale;
             }
+            if (eye == 0) { declTanH = halfTanH; declTanV = halfTanV; }
             float aH = std::atan(halfTanH);
             float aV = std::atan(halfTanV);
             // Positive shift moves an image's centre toward the nose:
@@ -2005,6 +2157,53 @@ void SubmitStereoFrame(ID3D11Texture2D* leftEyeTexture, ID3D11Texture2D* rightEy
             layer.viewCount = 2;
             layer.views = projViews;
             layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&layer));
+
+            // The HUD panel (hud_layer.h): fixed to the head, [hud] distance_m in front, covering the share of the game's
+            // frustum the HUD is drawn into ([hud] scale, offset_y) -- where it was in the eye images, but placed by the
+            // runtime. The reticle: at the aim's hit point, the size it has on the panel.
+            if (g_hudPanel.show && g_viewSpace != XR_NULL_HANDLE && declTanH > 0.0f && declTanV > 0.0f) {
+                float s = 1.0f, offDown = 0.0f, retHalf = 0.0f;
+                HudLayerPanelShape(&s, &offDown, &retHalf);
+                const float d = SettingGet("hud.distance_m");
+                hudQuad.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;   // premultiplied, as the game's HUD layer is
+                hudQuad.space = g_viewSpace;
+                hudQuad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+                hudQuad.subImage.swapchain = g_hudPanel.sc;
+                hudQuad.subImage.imageRect.offset = { 0, 0 };
+                hudQuad.subImage.imageRect.extent = { g_hudPanel.w, g_hudPanel.h };
+                hudQuad.subImage.imageArrayIndex = 0;
+                hudQuad.pose.orientation = { 0.0f, 0.0f, 0.0f, 1.0f };
+                hudQuad.pose.position = { 0.0f, -offDown * 2.0f * declTanV * d, -d };
+                hudQuad.size = { 2.0f * s * declTanH * d, 2.0f * s * declTanV * d };
+                layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&hudQuad));
+                if (g_hudReticle.show && hudRetHave) {
+                    hudReticleQuad.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+                    hudReticleQuad.space = g_appSpace;
+                    hudReticleQuad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+                    hudReticleQuad.subImage.swapchain = g_hudReticle.sc;
+                    hudReticleQuad.subImage.imageRect.offset = { 0, 0 };
+                    hudReticleQuad.subImage.imageRect.extent = { g_hudReticle.w, g_hudReticle.h };
+                    hudReticleQuad.subImage.imageArrayIndex = 0;
+                    hudReticleQuad.pose = hudRetPose;
+                    const float side = 4.0f * retHalf * declTanV * hudRetDist;
+                    hudReticleQuad.size = { side, side };
+                    layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&hudReticleQuad));
+                }
+                static int logged = 0;
+                if (logged < 3 || (g_hudReticle.show && hudRetHave && logged < 8)) {
+                    ++logged;
+                    char b[260];
+                    snprintf(b, sizeof(b), "HUDPANEL: panel %.2f x %.2f m at %.2f m (%.0f x %.0f deg), %.2f m %s centre%s", hudQuad.size.width, hudQuad.size.height, d,
+                             2.0f * std::atan(s * declTanH) * 57.29578f, 2.0f * std::atan(s * declTanV) * 57.29578f, std::fabs(hudQuad.pose.position.y),
+                             hudQuad.pose.position.y < 0.0f ? "below" : "above", g_hudReticle.show && hudRetHave ? "" : "; the reticle in the panel");
+                    std::string line = b;
+                    if (g_hudReticle.show && hudRetHave) {
+                        snprintf(b, sizeof(b), "; the reticle apart: %.2f m square, %.1f m away", hudReticleQuad.size.width, hudRetDist);
+                        line += b;
+                    }
+                    modlog::Line(line);
+                }
+            }
         }
 
         // In-headset overlay: status for its pages, its requests, and its panel on top.
@@ -2049,8 +2248,14 @@ void SubmitStereoFrame(ID3D11Texture2D* leftEyeTexture, ID3D11Texture2D* rightEy
     frameEndInfo.layers = layers.data();
     StallWatchdogSetPhase("xr:xrEndFrame");
     const double endFrameStart = NowMs();
-    XrCheck(xrEndFrame(g_session, &frameEndInfo), "xrEndFrame");
+    const bool endOk = XrCheck(xrEndFrame(g_session, &frameEndInfo), "xrEndFrame");
     g_xrEndFrame.Add(NowMs() - endFrameStart);
+    // A frame refused with the HUD panel in it: without the panel from the next one (the HUD over the eye images again).
+    if (!endOk) {
+        for (const XrCompositionLayerBaseHeader* l : layers) {
+            if (l == reinterpret_cast<XrCompositionLayerBaseHeader*>(&hudQuad)) { HudLayerPanelFailed("the runtime refused a frame with it"); break; }
+        }
+    }
 
     if (g_convertTime) {
         FrameRec& rec = g_frameRing[g_frameRingPos];
@@ -2976,6 +3181,9 @@ void ShutdownOpenXR() {
     GpuFrameTimerStop();
     if (g_swapchainLeft != XR_NULL_HANDLE) { xrDestroySwapchain(g_swapchainLeft); g_swapchainLeft = XR_NULL_HANDLE; }
     if (g_swapchainRight != XR_NULL_HANDLE) { xrDestroySwapchain(g_swapchainRight); g_swapchainRight = XR_NULL_HANDLE; }
+    if (g_hudPanel.sc != XR_NULL_HANDLE) { xrDestroySwapchain(g_hudPanel.sc); g_hudPanel.sc = XR_NULL_HANDLE; }
+    if (g_hudReticle.sc != XR_NULL_HANDLE) { xrDestroySwapchain(g_hudReticle.sc); g_hudReticle.sc = XR_NULL_HANDLE; }
+    if (g_viewSpace != XR_NULL_HANDLE) { xrDestroySpace(g_viewSpace); g_viewSpace = XR_NULL_HANDLE; }
     if (g_appSpace != XR_NULL_HANDLE) { xrDestroySpace(g_appSpace); g_appSpace = XR_NULL_HANDLE; }
     MotionInputShutdown();
     if (g_session != XR_NULL_HANDLE) { xrDestroySession(g_session); g_session = XR_NULL_HANDLE; }

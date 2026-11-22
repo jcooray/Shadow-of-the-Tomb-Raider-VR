@@ -6,6 +6,8 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "logger.h"
 #include "settings.h"
@@ -32,6 +34,27 @@ bool OldLoaderPresent(const std::wstring& dir) {
     return bytes.find("CheekyBootstrap_Status") != std::string::npos;
 }
 
+// Cheeky's own way to tell the eyes apart stamps small coded squares into the corners of each eye's image and looks for
+// them in what reaches the headset. This mod gives Cheeky the eye views itself, so that matching is switched off --
+// "ManualStereoMapping=1" in Cheeky's ini is its switch. On a headset that shows the image's corners (Quest 3) the
+// squares were in view all the time with fixed foveation. [debug] cheeky_markers=1 leaves Cheeky's setting alone.
+void CornerMarkersOff() {
+    if (SettingGet("debug.cheeky_markers") != 0.0f) return;
+    constexpr const char* kIni = "CheekyFoveatedDLSS\\CheekyFoveatedDLSS.ini";
+    std::ifstream in(kIni);
+    std::string line;
+    bool section = false;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (!line.empty() && line[0] == '[') section = line == "[CheekyFoveatedDLSS]";
+        else if (section && line == "ManualStereoMapping=1") return;   // already off
+    }
+    in.close();
+    const bool ok = IniWriteKeys(kIni, { { "CheekyFoveatedDLSS.ManualStereoMapping", "1" } });
+    modlog::Line(ok ? "CHEEKY: its eye matching by corner markers switched off (ManualStereoMapping=1 in its ini; this mod gives it the eye views)"
+                    : "CHEEKY: could not write ManualStereoMapping=1 to its ini -- its corner markers may show");
+}
+
 DWORD WINAPI Worker(void*) {
     const std::wstring dir = GameDir();
     const std::wstring host = dir + L"CheekyFoveatedDLSS\\CheekyFoveatedDLSSHost.dll";
@@ -49,6 +72,7 @@ DWORD WINAPI Worker(void*) {
         g_state.store(3);
         return 0;
     }
+    CornerMarkersOff();
     // No current-directory or PATH search: the host and its private dependencies live in its own folder.
     const HMODULE h = LoadLibraryExW(host.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (!h) {
